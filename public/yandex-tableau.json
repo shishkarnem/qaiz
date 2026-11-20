@@ -1,0 +1,10 @@
+{
+  "version": "2.0",
+  "api_version": 2,
+  "layout": {
+    "logo": "https://qaiz.ru/yandex-tableau-73x73.png",
+    "color": "#0b101b",
+    "show_title": true
+  },
+  "feed": "https://qaiz.ru/rss.xml"
+}

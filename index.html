@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ru" class="dark relative">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+
+    <!-- Favicon & Icons (Existing browser tab favicon preserved untouched) -->
+    <link rel="icon" type="image/png" href="https://file.pro-talk.ru/tgf/GgMpJwQ9JCkYKglyGHQMI20GO08nADcYXjIPYx4bFAtRRwlUNgleZxg4CCAZEyIWNT0sKwoBGG8KA3MpdxA9AAweFgo4NRQmEV9uZlUAaA11VQJrCjgDAzkkAVczLRouDiMXfQxTNBdFGT8aIyw2ZyIcIQsIKjIuHhtsBXZSBGZ5T3FP.png" />
+    <link rel="shortcut icon" type="image/png" href="https://file.pro-talk.ru/tgf/GgMpJwQ9JCkYKglyGHQMI20GO08nADcYXjIPYx4bFAtRRwlUNgleZxg4CCAZEyIWNT0sKwoBGG8KA3MpdxA9AAweFgo4NRQmEV9uZlUAaA11VQJrCjgDAzkkAVczLRouDiMXfQxTNBdFGT8aIyw2ZyIcIQsIKjIuHhtsBXZSBGZ5T3FP.png" />
+
+    <!-- PWA, Mobile & Search Icons -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="152x152" href="/apple-touch-icon-152x152.png" />
+    <link rel="apple-touch-icon" sizes="167x167" href="/apple-touch-icon-167x167.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-startup-image" href="/og-banner.jpg" />
+    <link rel="yandex-tableau-widget" href="/yandex-tableau.json" />
+    <link rel="alternate" type="application/rss+xml" title="Квайз (qAIz) — Новости и обзоры" href="/rss.xml" />
+    <link rel="sitemap" type="application/xml" title="Sitemap" href="/sitemap.xml" />
+    <meta name="theme-color" content="#0b101b" />
+    <meta name="application-name" content="Квайз (qAIz)" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Квайз" />
+    <meta name="msapplication-TileColor" content="#0b101b" />
+    <meta name="msapplication-TileImage" content="/mstile-150x150.png" />
+    <meta name="msapplication-config" content="/browserconfig.xml" />
+
+    <!-- Telegram Mini App SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+    <!-- SEO Primary Meta Tags -->
+    <title>Квайз (qAIz) — ИИ-Викторины и Интеллектуальные Игры Онлайн</title>
+    <meta name="title" content="Квайз (qAIz) — ИИ-Викторины и Интеллектуальные Игры Онлайн" />
+    <meta name="description" content="Онлайн-платформа умных развлечений Квайз (qAIz). Играйте бесплатно и с друзьями в ИИ-Квиз, Квиллионер, Сто Квадному, Своя Икра, Что? Где? Квада? и Уквакай Мелодию! Генерация вопросов нейросетью, авторские паки и мультиплеерные турниры." />
+    <meta name="keywords" content="квиз, qaiz, квайз, qaiz.ru, онлайн викторина, интеллектуальные игры онлайн, квиз с нейросетью, викторина онлайн бесплатно, игра миллионер онлайн, сто к одному онлайн, своя игра онлайн, что где когда онлайн, угадай мелодию онлайн, бесплатный квиз, квиз плиз онлайн, мозгобойня, искусственный интеллект викторина, генератор квизов, паб квиз, pub quiz, ai quiz generator, trivia online, jeopardy online, 100 to 1 game, millionaire quiz, melody game, играть с друзьями онлайн, командный квиз, викторина для вечеринки, мультиплеер викторина, квиз для компании, авторские квизы, нейросеть генератор вопросов, квиз для стримеров, эрудит онлайн, интеллектуальное шоу, квиз в телеграм, telegram mini app quiz, игра в вопросы и ответы, викторина по фильмам, викторина по музыке, викторина по истории, викторина по географии, викторины для детей, школьный квиз, игры для компании онлайн, игры на эрудицию, состязание эрудитов, квиллионер, своя икра, сто квадному, уквакай мелодию, квииз, что где квада, квази викторина, умные игры онлайн, бесплатные игры на логику, логические игры онлайн, развлекательные викторины, генерация вопросов ai, вопросы и ответы с ответами, квизы с фото, звуковые квизы, аудио викторины, музыкальный ринг онлайн, онлайн викторины 2026, лучшая викторина онлайн, топ квизов, создать свой квиз, конструктор викторин, редактор квизов, онлайн платформа квизов" />
+    <meta name="author" content="Квайз (qAIz)" />
+    <link rel="canonical" href="https://qaiz.ru/" />
+    <link rel="image_src" href="https://filestore.pro-talk.ru/GTUpJwQ9JCkYKglyGHQPB30GOkwjTgwEBjcsFxoEaSJbVxFzdhBRMngPdEwZEyEhD2geCiE6GHwKVgNRAjwTHXQjISUpNQQeLA8YFgdnGHEWMGMtN0F3TWhmWlF1aVhSGBMqZQh2ChAFPTowdRcdJwxTdSsOOjI3D3Itfy0nez8qEiYGJGpZVnRtVVpq.jpg" />
+
+    <!-- Search Engines & AI Indexing Rules (Yandex, Google, Bing, OpenAI, Claude, Perplexity) -->
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <meta name="googlebot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+    <meta name="yandex" content="index, follow" />
+    <meta name="bingbot" content="index, follow" />
+
+    <!-- Open Graph / Facebook / VK / Telegram / Social Previews -->
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="ru_RU" />
+    <meta property="og:url" content="https://qaiz.ru/" />
+    <meta property="og:site_name" content="Квайз (qAIz) — qaiz.ru" />
+    <meta property="og:title" content="Квайз (qAIz) — ИИ-Викторины и Интеллектуальные Игры Онлайн" />
+    <meta property="og:description" content="Онлайн-платформа умных развлечений Квайз (qAIz). Играйте бесплатно и с друзьями в ИИ-Квиз, Квиллионер, Сто Квадному, Своя Икра, Что? Где? Квада? и Уквакай Мелодию! Генерация вопросов нейросетью, авторские паки и мультиплеерные турниры." />
+    <meta property="og:image" content="https://filestore.pro-talk.ru/GTUpJwQ9JCkYKglyGHQPB30GOkwjTgwEBjcsFxoEaSJbVxFzdhBRMngPdEwZEyEhD2geCiE6GHwKVgNRAjwTHXQjISUpNQQeLA8YFgdnGHEWMGMtN0F3TWhmWlF1aVhSGBMqZQh2ChAFPTowdRcdJwxTdSsOOjI3D3Itfy0nez8qEiYGJGpZVnRtVVpq.jpg" />
+    <meta property="og:image:secure_url" content="https://filestore.pro-talk.ru/GTUpJwQ9JCkYKglyGHQPB30GOkwjTgwEBjcsFxoEaSJbVxFzdhBRMngPdEwZEyEhD2geCiE6GHwKVgNRAjwTHXQjISUpNQQeLA8YFgdnGHEWMGMtN0F3TWhmWlF1aVhSGBMqZQh2ChAFPTowdRcdJwxTdSsOOjI3D3Itfy0nez8qEiYGJGpZVnRtVVpq.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="594" />
+    <meta property="og:image:alt" content="Квайз (qAIz) — ИИ-Викторины и Интеллектуальные Игры Онлайн на qaiz.ru" />
+
+    <!-- Twitter Cards -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:domain" content="qaiz.ru" />
+    <meta name="twitter:url" content="https://qaiz.ru/" />
+    <meta name="twitter:title" content="Квайз (qAIz) — ИИ-Викторины и Интеллектуальные Игры Онлайн" />
+    <meta name="twitter:description" content="Онлайн-платформа умных развлечений Квайз (qAIz). Играйте бесплатно и с друзьями в ИИ-Квиз, Квиллионер, Сто Квадному, Своя Икра, Что? Где? Квада? и Уквакай Мелодию! Генерация вопросов нейросетью, авторские паки и мультиплеерные турниры." />
+    <meta name="twitter:image" content="https://filestore.pro-talk.ru/GTUpJwQ9JCkYKglyGHQPB30GOkwjTgwEBjcsFxoEaSJbVxFzdhBRMngPdEwZEyEhD2geCiE6GHwKVgNRAjwTHXQjISUpNQQeLA8YFgdnGHEWMGMtN0F3TWhmWlF1aVhSGBMqZQh2ChAFPTowdRcdJwxTdSsOOjI3D3Itfy0nez8qEiYGJGpZVnRtVVpq.jpg" />
+    <meta name="twitter:image:alt" content="Квайз (qAIz) — ИИ-Викторины и Интеллектуальные Игры Онлайн на qaiz.ru" />
+
+    <!-- Schema.org JSON-LD for Search Engines & AI Search Engines -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Квайз (qAIz)",
+      "url": "https://qaiz.ru/",
+      "applicationCategory": "GameApplication",
+      "operatingSystem": "All",
+      "image": "https://filestore.pro-talk.ru/GTUpJwQ9JCkYKglyGHQPB30GOkwjTgwEBjcsFxoEaSJbVxFzdhBRMngPdEwZEyEhD2geCiE6GHwKVgNRAjwTHXQjISUpNQQeLA8YFgdnGHEWMGMtN0F3TWhmWlF1aVhSGBMqZQh2ChAFPTowdRcdJwxTdSsOOjI3D3Itfy0nez8qEiYGJGpZVnRtVVpq.jpg",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "RUB"
+      },
+      "description": "Онлайн-платформа умных развлечений Квайз (qAIz). Играйте бесплатно и с друзьями в ИИ-Квиз, Квиллионер, Сто Квадному, Своя Икра, Что? Где? Квада? и Уквакай Мелодию! Генерация вопросов нейросетью, авторские паки и мультиплеерные турниры.",
+      "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": "4.9",
+        "ratingCount": "1540"
+      }
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "Квайз (qAIz)",
+      "url": "https://qaiz.ru/",
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": "https://qaiz.ru/games?q={search_term_string}",
+        "query-input": "required name=search_term_string"
+      }
+    }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

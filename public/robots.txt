@@ -1,0 +1,38 @@
+User-agent: *
+Allow: /
+Allow: /file/
+Allow: /game/
+Allow: /blog
+Allow: /blog/
+Allow: /rating
+Allow: /rss.xml
+Allow: /sitemap.xml
+Disallow: /api/
+Disallow: /system-admin
+
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Yandex
+Allow: /
+
+User-agent: YandexBot
+Allow: /
+
+User-agent: Googlebot
+Allow: /
+
+Host: https://qaiz.ru
+Sitemap: https://qaiz.ru/sitemap.xml

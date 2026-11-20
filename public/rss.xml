@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Квайз (qAIz) — ИИ-Викторины и Интеллектуальные Игры</title>
+    <link>https://qaiz.ru/</link>
+    <description>Новости, обзоры интеллектуальных игр и авторские викторины на платформе Квайз (qAIz).</description>
+    <language>ru</language>
+    <atom:link href="https://qaiz.ru/rss.xml" rel="self" type="application/rss+xml" />
+    <image>
+      <url>https://qaiz.ru/pwa-192x192.png</url>
+      <title>Квайз (qAIz)</title>
+      <link>https://qaiz.ru/</link>
+    </image>
+    <item>
+      <title>ИИ-Квиз, Квиллионер, Сто Квадному и Своя Икра онлайн на qaiz.ru</title>
+      <link>https://qaiz.ru/</link>
+      <guid isPermaLink="true">https://qaiz.ru/</guid>
+      <description>Играйте бесплатно и с друзьями в интеллектуальные игры с генерацией вопросов нейросетью.</description>
+    </item>
+  </channel>
+</rss>

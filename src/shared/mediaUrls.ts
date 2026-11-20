@@ -1,0 +1,37 @@
+// Direct permanent cloud URLs stored in PostgreSQL file_storage (ProTalk storage)
+
+export const DIRECT_MEDIA_URLS = {
+  // Brand & Logos
+  MINI_LOGO:
+    'https://file.pro-talk.ru/tgf/GgMpJwQ9JCkYKglyGHQMI20GO08nADcYXjIPYx4bFAtRRwlUNgleZxg4CCAZEyIWNT0sKwoBGG8KA3MpdxA9AAweFgo4NRQmEV9uZlUAaA11VQJrCjgDAzkkAVczLRouDiMXfQxTNBdFGT8aIyw2ZyIcIQsIKjIuHhtsBXZSBGZ5T3FP.png', // file_storage id 13 (miniqaiz.png)
+  HERO_LOGO:
+    'https://file.pro-talk.ru/tgf/GgMpJwQ9JCkYKglyGHQMI208O08nAGo0UCozHAJbAxwBQRh3B1dVFzkacTY1NSknJxE0KRg5CUVrcDUXaGEfGgcULx4YIHUfERRuZVYBbwR-UgZhcTgEPCEzHg12LBofHwUTQxJgIBNEJgMNJhwOPF0uPT48DRs5Hkp0AHZRAWd8S3NObQ.png', // file_storage id 14 (qaizlogo.png)
+  SOCIAL_COVER:
+    'https://filestore.pro-talk.ru/GTUpJwQ9JCkYKglyGHQPB30GOkwjTgwEBjcsFxoEaSJbVxFzdhBRMngPdEwZEyEhD2geCiE6GHwKVgNRAjwTHXQjISUpNQQeLA8YFgdnGHEWMGMtN0F3TWhmWlF1aVhSGBMqZQh2ChAFPTowdRcdJwxTdSsOOjI3D3Itfy0nez8qEiYGJGpZVnRtVVpq.jpg', // file_storage id 216 (QaizSocial.jpg)
+
+  // Game Covers
+  GAME_MELODY:
+    'https://file.pro-talk.ru/tgf/GTUpJwQ9JCkYKglyGHQMIwtjO08kTx82Ji4qPAo7MyEsTGh0FSpfOiwmECkZEyNRAg0eCgoBGG8KGHICABUMMDICAgcpNQQeLA8YFgdnGHEWMGMtN05yTm9kWVx2bl1SGBMkTzhDL1JEJjw_EgstGT0CNywaIC0xBGA3AAwZVgAuOy4GJH9dVHVpW19rZFYD.jpg', // file_storage id 15
+  GAME_100TO1:
+    'https://file.pro-talk.ru/tgf/GTUpJwQ9JCkYKglyGHQMIx8GO08kTzoRGCVyOCUOCzsuTGxZNDV7ZXw6DzcZEyNTAg0eCgoBGG8KBTY4VgM4DCMTFAUpNQQeLA8YFgdnGHEWMGMtN05yTm9kWVx2bl1SGBMkTzhDL1JEJjw_EgstGT0CNywaIC0xBGA3AAwZVgAuOy4GJH9dVHVpW19rZFYD.jpg', // file_storage id 16
+  GAME_JEOPARDY:
+    'https://file.pro-talk.ru/tgf/GTUpJwQ9JCkYKglyGHQMIx88O08kTz8GMigIIxc-CgEhRjhmDioANAlILTIZEyNcAg0eCgoBGG8KBHFMYSEeSic_PxUpNQQeLA8YFgdnGHEWMGMtN05yTm9kWVx2bl1SGBMkTzhDL1JEJjw_EgstGT0CNywaIC0xBGA3AAwZVgAuOy4GJH9dVHVpW19rZFYD.jpg', // file_storage id 17
+  GAME_BLITZ:
+    'https://file.pro-talk.ru/tgf/GTUpJwQ9JCkYKglyGHQMIx9jO08kTyobXgJzOAgqaR8NX2F_cwl3AQohaAMZEyNdAg0eCgoBGG8KanInUwN7PSoiHmUpNQQeLA8YFgdnGHEWMGMtN05yTm9kWVx2bl1SGBMkTzhDL1JEJjw_EgstGT0CNywaIC0xBGA3AAwZVgAuOy4GJH9dVHVpW19rZFYD.jpg', // file_storage id 18
+  GAME_MILLIONAIRE:
+    'https://file.pro-talk.ru/tgf/GTUpJwQ9JCkYKglyGHQMI20WO08kTyIDIgAGBRUNIz8KXDoAGTthEwk4MhUZEyNJAg0eCgoBGG8KBj4-YBR9AS0QFjspNQQeLA8YFgdnGHEWMGMtN05yTm9kWVx2bl1SGBMkTzhDL1JEJjw_EgstGT0CNywaIC0xBGA3AAwZVgAuOy4GJH9dVHVpW19rZFYD.jpg', // file_storage id 19
+  GAME_WHATWHEREWHEN:
+    'https://file.pro-talk.ru/tgf/GTUpJwQ9JCkYKglyGHQMIx8WO08kTwgXJxUnADcMNzwBRClmHzdgFSEYNz0ZEyNSAg0eCgoBGG8KADIqZA4TOwA2DyQpNQQeLA8YFgdnGHEWMGMtN05yTm9kWVx2bl1SGBMkTzhDL1JEJjw_EgstGT0CNywaIC0xBGA3AAwZVgAuOy4GJH9dVHVpW19rZFYD.jpg', // file_storage id 20
+
+  // Generation Audio Defaults
+  AUDIO_BLITZ_GEN:
+    'https://filestore.pro-talk.ru/GwMpJwQ9JCkYKglyGHQPBF9jOk0iTWsrAQM0blkKHhkUZjFNdBloJyUBDS8ZEyJcMRssKyE6GHQKbwMnChUBIAciPWI4NRQmEVBrZVICawB2UgdrCjgNKQkRJBVyNhwhaT8nQz0CdhBRAyAcKD4sGAMiDDQMAzouHg5oB3dWCmN4.mp3', // id 58
+  AUDIO_MILL_GEN:
+    'https://filestore.pro-talk.ru/GwMpJwQ9JCkYKglyGHQPB3MQDQgwMwhlJhc1IiIfNhg6QDRNJzVdHBIwNDIWJSkncSg8KRghO1UuYCoCVykpH3QDCWJfHnUfERRhYFUGbQdzUQFkcTgEMgsDKyg0bQEZEGIPcyxRcVFDMhkSIBccJiIPAxMDCTIxHkphBHRQBWl5Sg.mp3', // id 165
+  AUDIO_STO_GEN:
+    'https://file.pro-talk.ru/tgf/GwMpJwQ9JCkYKglyGHQMNgRjOk0yNwBhUD42CQYQGjYzbD15NgcEOSUSLRAZEyQxNQssKzAzCHwKbHAuYDkxCH0UHDQ4NRQmEV9uZlUAaA11VQJrCjgDAzkkAVczLRouDiMXfQxTNBdFGT8aIyw2ZyIcIQsIKjIuHhtsBXZSBGZ5T3FP.mp3', // id 215
+  AUDIO_WWW_GEN:
+    'https://filestore.pro-talk.ru/GwMpJwQ9JCkYKglyGHQPB3gGOk0tOAwYAysNHwA6PCsFfxsFJTJ_KT0NcjEZEyEsMQssKyE6GHQKZjQldgI7Lz84DR04NRQmEVBrZVICawB2UgdrCjgNKQkRJBVyNhwhaT8nQz0CdhBRAyAcKD4sGAMiDDQMAzouHg5oB3dWCmN4.mp3', // id 196
+  AUDIO_JEOPARDY_GEN:
+    'https://filestore.pro-talk.ru/GwMpJwQ9JCkYKglyGHQPB39jOk0tOGoZPQgGAgcHLTUKByFHAQ5HO38QPDgZEyEyMQssKyE6GHQKVCIRQSA4MjUeGw04NRQmEVBrZVICawB2UgdrCjgNKQkRJBVyNhwhaT8nQz0CdhBRAyAcKD4sGAMiDDQMAzouHg5oB3dWCmN4.mp3', // id 210
+} as const;
