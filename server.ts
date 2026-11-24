@@ -27,6 +27,7 @@ import { setupApiRoutes } from './src/server/routes';
 import { seoRouter } from './src/server/routes/seo';
 import { ensurePushInfrastructure } from './src/server/push';
 import { initBackupCronJob } from './src/server/cron';
+import { initSavRssScheduler } from './src/server/blog/savRssSync';
 
 dotenv.config();
 
@@ -67,18 +68,61 @@ async function startServer() {
     next();
   });
 
-  // Initialize ProTalk PostgreSQL Database
-  await initDb();
-  await ensurePushInfrastructure().catch((err) =>
-    console.warn('[WebPush Startup Warning]:', err?.message || err)
-  );
-  console.log('[ProTalk PG] PostgreSQL database initialized successfully.');
+  let dbReady = false;
+  let dbInitPromise: Promise<boolean> | null = null;
+  let postInitTasksScheduled = false;
 
-  // Run balance sync & game data reconciliation asynchronously after port binding so server starts instantly
-  setImmediate(() => {
-    recalculateAllUserBalances()
-      .then(() => reconcileGameData())
-      .catch((err) => console.error('[Startup Sync Warning]:', err));
+  const ensureBackendReady = (): Promise<boolean> => {
+    if (dbReady) return Promise.resolve(true);
+    if (dbInitPromise) return dbInitPromise;
+
+    dbInitPromise = (async () => {
+      try {
+        await initDb();
+        await ensurePushInfrastructure().catch((err) =>
+          console.warn('[WebPush Startup Warning]:', err?.message || err)
+        );
+        dbReady = true;
+        console.log('[ProTalk PG] PostgreSQL database initialized successfully.');
+
+        if (!postInitTasksScheduled) {
+          postInitTasksScheduled = true;
+          initSavRssScheduler();
+          setTimeout(() => {
+            recalculateAllUserBalances()
+              .then(() => reconcileGameData())
+              .catch((err) => console.error('[Startup Sync Warning]:', err));
+          }, 1500);
+        }
+        return true;
+      } catch (err: any) {
+        console.error('[ProTalk PG Init Warning]:', err?.message || err);
+        dbInitPromise = null;
+        return false;
+      }
+    })();
+
+    return dbInitPromise;
+  };
+
+  // Start DB initialization asynchronously in background so port binding is never delayed
+  void ensureBackendReady();
+
+  // Health endpoint responds immediately even while initial DB handshake finishes
+  app.get('/api/health', (_req, res) => {
+    res.json({ status: 'ok', dbReady });
+  });
+
+  // Ensure API requests wait briefly for DB readiness on cold boot (max 6s) and retry if needed
+  app.use('/api', async (req, _res, next) => {
+    if (req.path === '/health' || dbReady) return next();
+    try {
+      await Promise.race([
+        ensureBackendReady(),
+        new Promise((resolve) => setTimeout(resolve, 6000)),
+      ]);
+    } catch (_) {}
+    next();
   });
 
   // Initialize Daily 06:00 MSK Backup Cron Service
@@ -160,11 +204,6 @@ async function startServer() {
     console.warn('VITE_TELEGRAM_BOT_TOKEN not found. Bot disabled.');
   }
 
-  // API Routes
-  app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok' });
-  });
-
   // Dynamic SEO, RSS, Yandex Tableau, Browserconfig & Sitemap routes
   app.use('/', seoRouter);
 
@@ -191,6 +230,7 @@ async function startServer() {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
+        allowedHosts: true,
         hmr: hmrEnabled ? { server: httpServer } : false,
         ws: hmrEnabled ? undefined : (false as const),
       },
@@ -245,9 +285,14 @@ async function startServer() {
     });
   }
 
+  httpServer.keepAliveTimeout = 65000;
+  httpServer.headersTimeout = 66000;
+
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error('[Server Fatal Startup Error]:', err);
+});

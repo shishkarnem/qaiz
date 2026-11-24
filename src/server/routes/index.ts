@@ -62,6 +62,7 @@ export function setupApiRoutes(app: Express) {
   app.use('/api/game_sessions', gameSessionsRouter);
   app.use('/api/game_progress', gameProgressRouter);
   app.use('/api/posts', postsRouter);
+  app.use('/api/blog', postsRouter);
   app.use('/api/news', postsRouter);
   app.use('/api/transactions', transactionsRouter);
   app.use('/api/mailing_logs', mailingRouter);

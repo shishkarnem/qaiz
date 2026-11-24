@@ -40,6 +40,10 @@ export function useAdminSecondaryState({
     platforms: 'app',
     scheduled_at: ''
   });
+  const [rssSyncLoading, setRssSyncLoading] = useState(false);
+  const [rssSyncResult, setRssSyncResult] = useState<any | null>(null);
+  const [pinnedCount, setPinnedCount] = useState(0);
+  const [pinningPostId, setPinningPostId] = useState<string | null>(null);
 
   const [logsList, setLogsList] = useState<any[]>([]);
   const [selectedLog, setSelectedLog] = useState<any | null>(null);
@@ -195,14 +199,78 @@ export function useAdminSecondaryState({
 
   const fetchPosts = async () => {
     try {
-      const res = await adminFetch('/api/posts');
+      const res = await adminFetch('/api/posts?limit=200');
       if (!res.ok) return;
       const ct = res.headers.get('content-type') || '';
       if (!ct.includes('application/json')) return;
       const data = await res.json();
-      if (data && Array.isArray(data.data)) setPostsList(data.data);
+      if (data && Array.isArray(data.data)) {
+        setPostsList(data.data);
+        setPinnedCount(
+          data.pinnedCount !== undefined
+            ? Number(data.pinnedCount)
+            : data.data.filter((p: any) => Number(p.is_pinned || 0) === 1).length
+        );
+      }
+      if (data?.syncStatus) setRssSyncResult(data.syncStatus);
     } catch (err) {
       console.error('Error fetching posts:', err);
+    }
+  };
+
+  const handleTogglePinPost = async (post: any) => {
+    if (!post?.id) return;
+    const nextPinned = Number(post.is_pinned || 0) !== 1;
+    setPinningPostId(String(post.id));
+    try {
+      const res = await adminFetch(`/api/posts/${encodeURIComponent(post.id)}/pin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pinned: nextPinned })
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.success) {
+        showNotification(data?.error || 'Не удалось изменить закрепление поста', 'error');
+        return;
+      }
+      if (data.pinnedCount !== undefined) {
+        setPinnedCount(Number(data.pinnedCount));
+      }
+      showNotification(
+        nextPinned
+          ? `Пост закреплён (${data.pinnedCount ?? pinnedCount + 1}/10)`
+          : 'Пост откреплён'
+      );
+      await fetchPosts();
+    } catch (err: any) {
+      showNotification(err?.message || 'Ошибка закрепления поста', 'error');
+    } finally {
+      setPinningPostId(null);
+    }
+  };
+
+  const handleSyncRssFeed = async () => {
+    setRssSyncLoading(true);
+    try {
+      const res = await adminFetch('/api/blog/sync-rss', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: 100 })
+      });
+      const data = await res.json();
+      setRssSyncResult(data);
+      if (res.ok && data?.success) {
+        showNotification(
+          `RSS синхронизирован (${data.sourceDomain}): добавлено ${data.added}, обновлено ${data.updated}, пропущено ${data.skipped}`
+        );
+        await fetchPosts();
+      } else {
+        showNotification(data?.error || 'Ошибка синхронизации RSS', 'error');
+      }
+    } catch (err: any) {
+      showNotification(err?.message || 'Ошибка синхронизации RSS', 'error');
+    } finally {
+      setRssSyncLoading(false);
     }
   };
 
@@ -486,6 +554,12 @@ export function useAdminSecondaryState({
     handleRunCron,
     postsList,
     fetchPosts,
+    pinnedCount,
+    pinningPostId,
+    handleTogglePinPost,
+    rssSyncLoading,
+    rssSyncResult,
+    handleSyncRssFeed,
     editingPost,
     setEditingPost,
     postForm,

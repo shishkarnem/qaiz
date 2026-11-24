@@ -71,6 +71,41 @@ export function useAdminBackupIo({
 
   const [exportProgress, setExportProgress] = useState<{ percent: number; label: string } | null>(null);
 
+  const BOM_CHAR = String.fromCharCode(65279);
+  const TAB_CHAR = String.fromCharCode(9);
+  const LF_CHAR = String.fromCharCode(10);
+  const CR_CHAR = String.fromCharCode(13);
+
+  const stripLeadingBom = (str: string): string =>
+    str && str.charCodeAt(0) === 65279 ? str.slice(1) : str;
+
+  const stripOuterQuotes = (str: string): string => {
+    let s = str.trim();
+    while (s.length > 0 && (s[0] === '"' || s[0] === "'")) {
+      s = s.slice(1);
+    }
+    while (s.length > 0 && (s[s.length - 1] === '"' || s[s.length - 1] === "'")) {
+      s = s.slice(0, -1);
+    }
+    return s.trim();
+  };
+
+  const isKeyedJsonArrayText = (str: string): boolean => {
+    if (!str.startsWith('"')) return false;
+    const colonIdx = str.indexOf(':');
+    if (colonIdx <= 1) return false;
+    const keyPart = str.slice(0, colonIdx).trim();
+    if (!keyPart.endsWith('"')) return false;
+    const afterColon = str.slice(colonIdx + 1).trim();
+    return afterColon.startsWith('[');
+  };
+
+  const splitLinesSafe = (str: string): string[] =>
+    str
+      .split(LF_CHAR)
+      .map((line) => (line.endsWith(CR_CHAR) ? line.slice(0, -1) : line))
+      .filter((l) => l.trim().length > 0);
+
   const convertRowsArrayToCsvText = (rows: any[], preferredCols?: string[]): string => {
     if (!Array.isArray(rows) || rows.length === 0) return '';
     const cols = preferredCols && preferredCols.length > 0 ? preferredCols : Object.keys(rows[0] || {});
@@ -86,18 +121,23 @@ export function useAdminBackupIo({
         })
         .join(',')
     );
-    return [header, ...lines].join('\n');
+    return [header, ...lines].join(LF_CHAR);
   };
 
   const computeCsvSummary = (rawText: string) => {
-    const clean = (rawText || '').replace(/^\uFEFF/, '').trim();
+    const clean = stripLeadingBom(rawText || '').trim();
     if (!clean) {
       setCsvParsedSummary(null);
       return;
     }
-    if (clean.startsWith('[') || clean.startsWith('{') || /^"[^"]+"\s*:\s*\[/.test(clean)) {
+    if (clean.startsWith('[') || clean.startsWith('{') || isKeyedJsonArrayText(clean)) {
       try {
-        const normalized = /^"[^"]+"\s*:\s*\[/.test(clean) ? `{${clean.replace(/,\s*$/, '')}}` : clean;
+        let normalized = clean;
+        if (isKeyedJsonArrayText(clean)) {
+          let inner = clean.trim();
+          if (inner.endsWith(',')) inner = inner.slice(0, -1).trim();
+          normalized = `{${inner}}`;
+        }
         const parsed = JSON.parse(normalized);
         let arr: any[] = [];
         if (Array.isArray(parsed)) {
@@ -120,19 +160,19 @@ export function useAdminBackupIo({
       } catch (_) {}
     }
 
-    const lines = clean.split(/\r?\n/).filter(l => l.trim().length > 0);
+    const lines = splitLinesSafe(clean);
     const firstLine = lines[0] || '';
-    const delimiter =
-      firstLine.includes('\t') && !firstLine.includes(',')
-        ? '\t'
+    const colSep =
+      firstLine.includes(TAB_CHAR) && !firstLine.includes(',')
+        ? TAB_CHAR
         : firstLine.includes(';') && !firstLine.includes(',')
         ? ';'
         : ',';
-    const cols = firstLine ? firstLine.split(delimiter).length : 0;
+    const cols = firstLine ? firstLine.split(colSep).length : 0;
     const schemaCols = tableData.columns.map(c => String(c.name || c).toLowerCase());
     const firstCells = firstLine
-      .split(delimiter)
-      .map(c => c.replace(/^\uFEFF/, '').trim().replace(/^["']+|["']+$/g, '').trim().toLowerCase());
+      .split(colSep)
+      .map(c => stripOuterQuotes(stripLeadingBom(c)).toLowerCase());
     const hasHeader = schemaCols.length === 0 || firstCells.some(c => schemaCols.includes(c));
     const rows = hasHeader ? Math.max(0, lines.length - 1) : lines.length;
     setCsvParsedSummary({ rows, cols, sizeBytes: new Blob([rawText]).size });
@@ -173,7 +213,7 @@ export function useAdminBackupIo({
       setRestoreIsLargePreview(true);
       setRestoreJsonText(
         text.slice(0, MAX_TEXTAREA_CHARS) +
-          `\n\n--- Полный объем JSON (${(text.length / 1024 / 1024).toFixed(2)} MB) сохранен в памяти и готов к восстановлению ---`
+          `${LF_CHAR}${LF_CHAR}--- Полный объем JSON (${(text.length / 1024 / 1024).toFixed(2)} MB) сохранен в памяти и готов к восстановлению ---`
       );
     } else {
       setRestoreIsLargePreview(false);
@@ -196,7 +236,7 @@ export function useAdminBackupIo({
     };
     reader.onload = () => {
       let text = typeof reader.result === 'string' ? reader.result : '';
-      const trimmed = text.replace(/^\uFEFF/, '').trim();
+      const trimmed = stripLeadingBom(text).trim();
       if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
         try {
           const parsed = JSON.parse(trimmed);
@@ -267,7 +307,7 @@ export function useAdminBackupIo({
         'Ошибка подгрузки таблицы'
       );
       setCsvLoadProgress(100);
-      setCsvText(text.replace(/^\uFEFF/, ''));
+      setCsvText(stripLeadingBom(text));
       computeCsvSummary(text);
       showNotification(`Данные таблицы «${activeTable}» подгружены в поле для сохранения`);
     } catch (err: any) {

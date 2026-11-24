@@ -33,6 +33,9 @@ sw.addEventListener('install', () => {
 sw.addEventListener('activate', (event: any) => {
   event.waitUntil(
     (async () => {
+      if (typeof caches !== 'undefined') {
+        await caches.delete('qaiz-static-assets-v1').catch(() => {});
+      }
       const clientsApi = sw.clients as any;
       if (clientsApi && typeof clientsApi.claim === 'function') {
         await clientsApi.claim();
@@ -56,12 +59,28 @@ registerRoute(
   })
 );
 
-// Cache JS/CSS/worker chunks with StaleWhileRevalidate
+// Cache built production /assets/* and font files only (never cache Vite dev /node_modules/, /src/, or /@vite/* chunks)
 registerRoute(
-  ({ request }) =>
-    request.destination === 'style' || request.destination === 'script' || request.destination === 'font',
+  ({ request, url }) => {
+    if (url.origin !== sw.location.origin) return false;
+    const p = url.pathname;
+    if (
+      p.startsWith('/node_modules/') ||
+      p.startsWith('/src/') ||
+      p.startsWith('/@') ||
+      p === '/dev-sw.js' ||
+      p === '/sw.js'
+    ) {
+      return false;
+    }
+    if (request.destination === 'font') return true;
+    return (
+      p.startsWith('/assets/') &&
+      (request.destination === 'style' || request.destination === 'script')
+    );
+  },
   new StaleWhileRevalidate({
-    cacheName: 'qaiz-static-assets-v1',
+    cacheName: 'qaiz-static-assets-v2',
   })
 );
 

@@ -213,30 +213,39 @@ export async function saveNotificationSettings(
   }
 }
 
-export async function fetchRecentChatAlerts(userId: string, since?: string): Promise<ChatAlertNotification[]> {
+export async function fetchRecentChatAlertsResult(
+  userId: string,
+  since?: string
+): Promise<{ ok: boolean; alerts: ChatAlertNotification[] }> {
   if (
     !userId ||
     userId === 'usr_guest' ||
     userId.startsWith('demo_') ||
     (typeof window !== 'undefined' && (window as any).__qaiz_is_logging_out)
   ) {
-    return [];
+    return { ok: true, alerts: [] };
   }
   try {
     const url = since
       ? `/api/notifications/recent-chat-alerts?user_id=${encodeURIComponent(userId)}&since=${encodeURIComponent(since)}`
       : `/api/notifications/recent-chat-alerts?user_id=${encodeURIComponent(userId)}`;
     const res = await fetch(url);
-    if (!res.ok) return [];
+    if (!res.ok) return { ok: false, alerts: [] };
     const text = await res.text();
     const data = parseJsonSafely(res, text);
     if (data?.success && Array.isArray(data?.alerts)) {
-      return data.alerts;
+      return { ok: true, alerts: data.alerts };
     }
+    return { ok: false, alerts: [] };
   } catch (err) {
     if (!isTransientNetworkError(err)) {
       console.warn('Error fetching chat alerts:', err);
     }
+    return { ok: false, alerts: [] };
   }
-  return [];
+}
+
+export async function fetchRecentChatAlerts(userId: string, since?: string): Promise<ChatAlertNotification[]> {
+  const res = await fetchRecentChatAlertsResult(userId, since);
+  return res.alerts;
 }

@@ -31,10 +31,26 @@ export default defineConfig(() => {
       alias: {
         '@': path.resolve(__dirname, './src'),
       },
+      dedupe: ['react', 'react-dom', 'react-router', 'react-router-dom'],
+    },
+    optimizeDeps: {
+      include: [
+        'react',
+        'react-dom',
+        'react-dom/client',
+        'react/jsx-runtime',
+        'react/jsx-dev-runtime',
+        'react-router',
+        'react-router-dom',
+        'motion/react',
+        'lucide-react',
+        'zustand',
+      ],
     },
     server: {
       host: '0.0.0.0',
       port: Number(process.env.PORT) || 3000,
+      allowedHosts: true as const,
       // HMR is disabled by default in preview/proxy environments unless explicitly enabled.
       hmr: process.env.ENABLE_HMR === 'true',
       ws: process.env.ENABLE_HMR === 'true' ? undefined : (false as const),

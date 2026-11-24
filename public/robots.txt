@@ -36,3 +36,6 @@ Allow: /
 
 Host: https://qaiz.ru
 Sitemap: https://qaiz.ru/sitemap.xml
+
+Host: https://qaiz.online
+Sitemap: https://qaiz.online/sitemap.xml

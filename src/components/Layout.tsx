@@ -123,7 +123,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       audioSystem.preloadSections(['menu']);
     }
 
-    audioSystem.ensureAudioUnlocked();
+    audioSystem.ensureAudioUnlocked(false);
   }, [location.pathname]);
 
   return (

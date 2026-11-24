@@ -6,7 +6,7 @@ import { ChatNotificationToast } from './ChatNotificationToast';
 import {
   ChatAlertNotification,
   fetchNotificationSettings,
-  fetchRecentChatAlerts,
+  fetchRecentChatAlertsResult,
   UserNotificationSettings,
   DEFAULT_NOTIFICATION_SETTINGS,
   resolveChannelKeyForType,
@@ -98,13 +98,19 @@ export const GlobalChatToastNotifier: React.FC = () => {
     };
   }, [pushAlertsToCascade, settings]);
 
+  const consecutiveFailuresRef = useRef<number>(0);
+
   // Poll for recent alerts from server
-  const checkAlerts = useCallback(async () => {
-    if (!isRealAuthenticatedUid || (typeof window !== 'undefined' && (window as any).__qaiz_is_logging_out)) return;
-    if (!settings.toast_enabled) return;
+  const checkAlerts = useCallback(async (): Promise<boolean> => {
+    if (!isRealAuthenticatedUid || (typeof window !== 'undefined' && (window as any).__qaiz_is_logging_out)) return true;
+    if (!settings.toast_enabled) return true;
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return true;
 
     try {
-      const alerts = await fetchRecentChatAlerts(currentUid, lastCheckTimeRef.current);
+      const { ok, alerts } = await fetchRecentChatAlertsResult(currentUid, lastCheckTimeRef.current);
+      if (!ok) {
+        return false;
+      }
       if (alerts && alerts.length > 0) {
         const newAlerts = alerts.filter((a) => !seenIdsRef.current.has(a.id));
 
@@ -130,15 +136,53 @@ export const GlobalChatToastNotifier: React.FC = () => {
         }
       }
       isFirstRunRef.current = false;
-    } catch (_) {}
+      return true;
+    } catch (_) {
+      return false;
+    }
   }, [currentUid, isRealAuthenticatedUid, settings, pushAlertsToCascade]);
 
   useEffect(() => {
     if (!isRealAuthenticatedUid || (typeof window !== 'undefined' && (window as any).__qaiz_is_logging_out)) return;
 
-    checkAlerts();
-    const interval = setInterval(checkAlerts, 3000);
-    return () => clearInterval(interval);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleNext = (delayMs: number) => {
+      if (cancelled) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(runPoll, delayMs);
+    };
+
+    const runPoll = async () => {
+      if (cancelled) return;
+      const ok = await checkAlerts();
+      if (cancelled) return;
+      if (ok) {
+        consecutiveFailuresRef.current = 0;
+        scheduleNext(4000);
+      } else {
+        consecutiveFailuresRef.current = Math.min(4, consecutiveFailuresRef.current + 1);
+        const backoffMs = Math.min(60000, 10000 * Math.pow(2, consecutiveFailuresRef.current - 1));
+        scheduleNext(backoffMs);
+      }
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible' && !cancelled) {
+        consecutiveFailuresRef.current = 0;
+        scheduleNext(300);
+      }
+    };
+
+    runPoll();
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, [currentUid, isRealAuthenticatedUid, checkAlerts]);
 
   const handleCloseAlert = useCallback((id: string) => {

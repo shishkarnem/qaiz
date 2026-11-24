@@ -153,11 +153,31 @@ async function persistAppVersionAndDate(
 // Apply super admin security barrier to all adminSystem routes
 adminSystemRouter.use(requireSuperAdmin);
 
+const BOM_CHAR = String.fromCharCode(65279);
+const TAB_CHAR = String.fromCharCode(9);
+const LF_CHAR = String.fromCharCode(10);
+const CR_CHAR = String.fromCharCode(13);
+
+function stripLeadingBomChar(val: string): string {
+  return val && val.charCodeAt(0) === 65279 ? val.slice(1) : val;
+}
+
+function stripOuterCsvQuotes(val: string): string {
+  let s = val.trim();
+  while (s.length > 0 && (s[0] === '"' || s[0] === "'")) {
+    s = s.slice(1);
+  }
+  while (s.length > 0 && (s[s.length - 1] === '"' || s[s.length - 1] === "'")) {
+    s = s.slice(0, -1);
+  }
+  return s.trim();
+}
+
 // Helper to convert rows to CSV format
 function arrayToCsv(rows: any[], columns?: string[]): string {
   if (!rows || rows.length === 0) {
     if (columns && columns.length > 0) {
-      return '\uFEFF' + columns.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',') + '\n';
+      return BOM_CHAR + columns.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',') + LF_CHAR;
     }
     return '';
   }
@@ -179,16 +199,16 @@ function arrayToCsv(rows: any[], columns?: string[]): string {
       .join(',');
   });
 
-  return '\uFEFF' + [headerRow, ...dataRows].join('\n');
+  return BOM_CHAR + [headerRow, ...dataRows].join(LF_CHAR);
 }
 
-// Helper to parse CSV/TSV format (supports UTF-8 BOM, multi-line quoted fields, comma/semicolon/tab delimiters, and optional schema column fallback)
+// Helper to parse CSV/TSV format (supports UTF-8 BOM, multi-line quoted fields, comma/semicolon/tab separators, and optional schema column fallback)
 function parseCsv(csvText: string, schemaColumns?: string[]): { columns: string[]; rows: any[] } {
-  const cleanText = String(csvText || '').replace(/^\uFEFF/, '').trim();
+  const cleanText = stripLeadingBomChar(String(csvText || '')).trim();
   if (!cleanText) return { columns: [], rows: [] };
 
-  let delimiter = ',';
-  const firstLineEnd = cleanText.indexOf('\n');
+  let colSep = ',';
+  const firstLineEnd = cleanText.indexOf(LF_CHAR);
   const firstLine = firstLineEnd >= 0 ? cleanText.slice(0, firstLineEnd) : cleanText;
   let commaCount = 0;
   let semiCount = 0;
@@ -200,13 +220,13 @@ function parseCsv(csvText: string, schemaColumns?: string[]): { columns: string[
     else if (!inQ) {
       if (ch === ',') commaCount++;
       else if (ch === ';') semiCount++;
-      else if (ch === '\t') tabCount++;
+      else if (ch === TAB_CHAR) tabCount++;
     }
   }
   if (tabCount > commaCount && tabCount > semiCount) {
-    delimiter = '\t';
+    colSep = TAB_CHAR;
   } else if (semiCount > commaCount) {
-    delimiter = ';';
+    colSep = ';';
   }
 
   const parsedRows: string[][] = [];
@@ -223,11 +243,11 @@ function parseCsv(csvText: string, schemaColumns?: string[]): { columns: string[
       } else {
         inQuotes = !inQuotes;
       }
-    } else if (char === delimiter && !inQuotes) {
+    } else if (char === colSep && !inQuotes) {
       currentRow.push(cur);
       cur = '';
-    } else if ((char === '\n' || char === '\r') && !inQuotes) {
-      if (char === '\r' && cleanText[i + 1] === '\n') {
+    } else if ((char === LF_CHAR || char === CR_CHAR) && !inQuotes) {
+      if (char === CR_CHAR && cleanText[i + 1] === LF_CHAR) {
         i++;
       }
       currentRow.push(cur);
@@ -248,11 +268,7 @@ function parseCsv(csvText: string, schemaColumns?: string[]): { columns: string[
   if (parsedRows.length === 0) return { columns: [], rows: [] };
 
   const cleanHeaderCell = (h: string) =>
-    String(h || '')
-      .replace(/^\uFEFF/, '')
-      .trim()
-      .replace(/^["']+|["']+$/g, '')
-      .trim();
+    stripOuterCsvQuotes(stripLeadingBomChar(String(h || '')));
 
   let headers = parsedRows[0].map(cleanHeaderCell);
   let startRowIndex = 1;
@@ -300,7 +316,7 @@ function parseTableImportPayload(rawInput: any, tableName: string, schemaColumns
     return rawInput.filter((r) => r && typeof r === 'object');
   }
 
-  const text = String(rawInput || '').replace(/^\uFEFF/, '').trim();
+  const text = stripLeadingBomChar(String(rawInput || '')).trim();
   if (!text) return [];
 
   const targetLower = tableName.toLowerCase();
@@ -1005,12 +1021,7 @@ const importSingleTableHandler = async (req: any, res: any) => {
       const norm: Record<string, any> = {};
 
       for (const [k, v] of Object.entries(rawRow)) {
-        const cleanK = String(k || '')
-          .replace(/^\uFEFF/, '')
-          .trim()
-          .replace(/^["']+|["']+$/g, '')
-          .trim()
-          .toLowerCase();
+        const cleanK = stripOuterCsvQuotes(stripLeadingBomChar(String(k || ''))).toLowerCase();
         const colMeta = colInfoMap.get(cleanK);
         if (colMeta) {
           norm[colMeta.name] = v;

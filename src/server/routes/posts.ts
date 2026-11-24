@@ -1,5 +1,11 @@
 import { Router } from 'express';
 import { getAll, getOne, runSql, generateId } from '../db';
+import { requireSuperAdmin } from '../authMiddleware';
+import {
+  ensureBlogRssSchema,
+  getLastSavRssSyncStatus,
+  syncSavRssFeed,
+} from '../blog/savRssSync';
 
 export const postsRouter = Router();
 
@@ -22,30 +28,124 @@ function slugifyTitle(title: string): string {
 
 postsRouter.get('/', async (req, res) => {
   try {
+    await ensureBlogRssSchema().catch(() => {});
+
     const gameId = typeof req.query.game_id === 'string' ? req.query.game_id.trim() : '';
-    const q = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase() : '';
-    let posts = await getAll('SELECT * FROM posts ORDER BY created_at DESC');
+    const category = typeof req.query.category === 'string' ? req.query.category.trim() : '';
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const hasExplicitLimit = req.query.limit !== undefined;
+    const rawLimit = parseInt(String(req.query.limit || '100'), 10);
+    const limit = hasExplicitLimit
+      ? Math.max(1, Math.min(100, isNaN(rawLimit) ? 20 : rawLimit))
+      : 200;
+    const rawOffset = parseInt(String(req.query.offset || '0'), 10);
+    const offset = Math.max(0, isNaN(rawOffset) ? 0 : rawOffset);
+
+    const conditions: string[] = ['COALESCE(is_published, 1) = 1'];
+    const params: any[] = [];
+    let pIdx = 1;
 
     if (gameId && gameId !== 'all') {
-      posts = posts.filter((p: any) => p.game_id === gameId);
-    }
-    if (q) {
-      posts = posts.filter((p: any) =>
-        String(p.title || '').toLowerCase().includes(q) ||
-        String(p.excerpt || '').toLowerCase().includes(q) ||
-        String(p.content || '').toLowerCase().includes(q) ||
-        String(p.seo_keywords || '').toLowerCase().includes(q)
-      );
+      conditions.push(`game_id = $${pIdx++}`);
+      params.push(gameId);
     }
 
-    res.json({ data: posts });
+    if (category && category !== 'all') {
+      conditions.push(`LOWER(COALESCE(category, '')) = LOWER($${pIdx++})`);
+      params.push(category);
+    }
+
+    if (q) {
+      const likeTerm = `%${q}%`;
+      conditions.push(
+        `(COALESCE(title, '') ILIKE $${pIdx} OR COALESCE(excerpt, '') ILIKE $${pIdx} OR COALESCE(content, '') ILIKE $${pIdx} OR COALESCE(seo_keywords, '') ILIKE $${pIdx} OR COALESCE(category, '') ILIKE $${pIdx})`
+      );
+      params.push(likeTerm);
+      pIdx++;
+    }
+
+    const whereSql = conditions.join(' AND ');
+
+    const [countRow, pinnedCountRow, posts, categoriesRows] = await Promise.all([
+      getOne<{ cnt: number }>(`SELECT COUNT(*)::int AS cnt FROM posts WHERE ${whereSql}`, params),
+      getOne<{ cnt: number }>(`SELECT COUNT(*)::int AS cnt FROM posts WHERE COALESCE(is_pinned, 0) = 1`),
+      getAll<any>(
+        `SELECT * FROM posts
+         WHERE ${whereSql}
+         ORDER BY
+           CASE
+             WHEN external_id IS NULL AND game_id = 'blitz' THEN 1
+             WHEN external_id IS NULL AND game_id = 'millionaire' THEN 2
+             WHEN external_id IS NULL AND game_id = '100to1' THEN 3
+             WHEN external_id IS NULL AND game_id = 'whatwherewhen' THEN 4
+             WHEN external_id IS NULL AND game_id = 'jeopardy' THEN 5
+             WHEN COALESCE(is_pinned, 0) = 1 THEN 6
+             ELSE 7
+           END ASC,
+           pinned_at DESC NULLS LAST,
+           COALESCE(published_at, created_at) DESC,
+           id DESC
+         LIMIT $${pIdx} OFFSET $${pIdx + 1}`,
+        [...params, limit, offset]
+      ),
+      getAll<{ category: string; cnt: number }>(
+        `SELECT COALESCE(NULLIF(TRIM(category), ''), '') AS category, COUNT(*)::int AS cnt
+         FROM posts
+         WHERE COALESCE(is_published, 1) = 1 AND NULLIF(TRIM(category), '') IS NOT NULL
+         GROUP BY category
+         ORDER BY cnt DESC, category ASC`
+      ).catch(() => []),
+    ]);
+
+    const total = Number(countRow?.cnt || posts.length);
+    const pinnedCount = Number(pinnedCountRow?.cnt || 0);
+    const hasMore = offset + posts.length < total;
+
+    res.json({
+      data: posts,
+      total,
+      limit,
+      offset,
+      hasMore,
+      pinnedCount,
+      maxPinned: 10,
+      categories: categoriesRows,
+      syncStatus: getLastSavRssSyncStatus(),
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
+postsRouter.get('/sync-rss/status', requireSuperAdmin, async (_req, res) => {
+  res.json({
+    success: true,
+    status: getLastSavRssSyncStatus(),
+  });
+});
+
+postsRouter.post('/sync-rss', requireSuperAdmin, async (req, res) => {
+  try {
+    const limit = Number(req.body?.limit || req.query.limit || 100);
+    const category =
+      typeof req.body?.category === 'string'
+        ? req.body.category
+        : typeof req.query.category === 'string'
+        ? req.query.category
+        : undefined;
+    const result = await syncSavRssFeed({ limit, category });
+    if (!result.success) {
+      return res.status(502).json(result);
+    }
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || 'Ошибка запуска RSS-синхронизации' });
+  }
+});
+
 postsRouter.get('/:slugOrId', async (req, res) => {
   try {
+    await ensureBlogRssSchema().catch(() => {});
     const { slugOrId } = req.params;
     const post = await getOne(
       'SELECT * FROM posts WHERE slug = $1 OR id = $2 LIMIT 1',
@@ -63,6 +163,59 @@ postsRouter.get('/:slugOrId', async (req, res) => {
     res.json({ data: post });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+postsRouter.post('/:id/pin', requireSuperAdmin, async (req, res) => {
+  try {
+    await ensureBlogRssSchema().catch(() => {});
+    const { id } = req.params;
+    const post = await getOne<any>('SELECT * FROM posts WHERE id = $1 OR slug = $2 LIMIT 1', [id, id]);
+    if (!post) {
+      return res.status(404).json({ success: false, error: 'Статья не найдена' });
+    }
+
+    const currentlyPinned = Number(post.is_pinned || 0) === 1;
+    const nextPinned = req.body?.pinned !== undefined ? Boolean(req.body.pinned) : !currentlyPinned;
+
+    if (nextPinned && !currentlyPinned) {
+      const otherPinnedRow = await getOne<{ cnt: number }>(
+        'SELECT COUNT(*)::int AS cnt FROM posts WHERE COALESCE(is_pinned, 0) = 1 AND id <> $1',
+        [post.id]
+      );
+      const otherPinned = Number(otherPinnedRow?.cnt || 0);
+      if (otherPinned >= 10) {
+        return res.status(400).json({
+          success: false,
+          error: 'Можно закрепить максимум 10 постов. Сначала открепите один из закреплённых постов.',
+          pinnedCount: otherPinned,
+          maxPinned: 10,
+        });
+      }
+    }
+
+    await runSql(
+      `UPDATE posts
+       SET is_pinned = $1,
+           pinned_at = CASE WHEN $1 = 1 THEN NOW() ELSE NULL END,
+           updated_at = NOW()
+       WHERE id = $2`,
+      [nextPinned ? 1 : 0, post.id]
+    );
+
+    const [updated, countRow] = await Promise.all([
+      getOne('SELECT * FROM posts WHERE id = $1', [post.id]),
+      getOne<{ cnt: number }>('SELECT COUNT(*)::int AS cnt FROM posts WHERE COALESCE(is_pinned, 0) = 1'),
+    ]);
+
+    res.json({
+      success: true,
+      data: updated,
+      pinnedCount: Number(countRow?.cnt || 0),
+      maxPinned: 10,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

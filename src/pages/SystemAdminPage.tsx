@@ -655,6 +655,12 @@ export const SystemAdminPage: React.FC = () => {
               handleSavePost={secState.handleSavePost}
               handleDeletePost={secState.handleDeletePost}
               fetchPosts={secState.fetchPosts}
+              pinnedCount={secState.pinnedCount}
+              pinningPostId={secState.pinningPostId}
+              handleTogglePinPost={secState.handleTogglePinPost}
+              rssSyncLoading={secState.rssSyncLoading}
+              rssSyncResult={secState.rssSyncResult}
+              handleSyncRssFeed={secState.handleSyncRssFeed}
             />
           )}
 

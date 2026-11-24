@@ -113,13 +113,17 @@ class GlobalAudioSystem {
     return this.sharedAudioCtx;
   }
 
-  public ensureAudioUnlocked(fromRealGesture: boolean = true): void {
+  public ensureAudioUnlocked(fromRealGesture: boolean = false): void {
     if (typeof window === 'undefined') return;
     if (fromRealGesture) {
       this.hasUserGesture = true;
     }
     if (!this.hasUserGesture) return;
     if (this.getEffectiveMasterVolume() <= 0) return;
+
+    const navActivation = (navigator as any)?.userActivation;
+    const canStartAudioCtx = !navActivation || Boolean(navActivation.hasBeenActive);
+    if (!canStartAudioCtx) return;
 
     try {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
