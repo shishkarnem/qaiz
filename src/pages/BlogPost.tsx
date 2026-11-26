@@ -19,13 +19,24 @@ import { LeafButton } from '../components/ui/LeafButton';
 import { BubbleElement } from '../components/ui/BubbleElement';
 import { BlogArticleContent } from '../components/BlogArticleContent';
 import { TgButtonsBlock } from '../components/blog/TgButtonsBlock';
+import { TgGalleryBlock } from '../components/blog/TgGalleryBlock';
+import { BlogMascotLoader } from '../components/blog/loaders/BlogMascotLoader';
+import { SiteFooter } from '../components/layout/SiteFooter';
 import {
   TgButtonItem,
   sanitizeBlogUrl,
   isVideoMediaUrl,
   normalizeDisplayCaps,
+  resolveArticleFallbackMedia,
 } from '../components/blog/urlSafety';
 import { DIRECT_MEDIA_URLS } from '../shared/mediaUrls';
+import {
+  getCachedBlogPost,
+  getCachedRelatedPosts,
+  hasSavedBlogPosition,
+  markBlogRestorePending,
+  seedPostsIntoCache,
+} from '../services/blog/blogCache';
 
 const GAME_META: Record<string, { title: string; route: string; badge: string }> = {
   blitz: { title: 'КвИИз', route: '/?start_game=blitz', badge: 'Скоростной ИИ-спринт' },
@@ -46,39 +57,84 @@ function resolveAbsoluteImageUrl(rawUrl?: string | null): string {
 export function BlogPostPage() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
-  const [post, setPost] = useState<any | null>(null);
-  const [relatedPosts, setRelatedPosts] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+
+  const initialCached = slug ? getCachedBlogPost(slug)?.post || null : null;
+  const [post, setPost] = useState<any | null>(() => initialCached);
+  const [relatedPosts, setRelatedPosts] = useState<any[]>(() =>
+    slug ? getCachedRelatedPosts(slug, 4) : []
+  );
+  const [loading, setLoading] = useState<boolean>(() => !initialCached);
   const [copiedLink, setCopiedLink] = useState(false);
 
+  const handleBackToBlog = () => {
+    if (hasSavedBlogPosition()) {
+      markBlogRestorePending(true);
+    }
+    navigate('/blog');
+  };
+
   useEffect(() => {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
+    if (document.documentElement) document.documentElement.scrollTop = 0;
+    if (document.body) document.body.scrollTop = 0;
     if (!slug) return;
 
-    const loadPost = async () => {
+    let cancelled = false;
+    const cachedEntry = getCachedBlogPost(slug);
+    const cachedRelated = getCachedRelatedPosts(slug, 4);
+
+    if (cachedEntry?.post) {
+      setPost(cachedEntry.post);
+      setLoading(false);
+    } else {
+      setPost(null);
       setLoading(true);
+    }
+    if (cachedRelated.length > 0) {
+      setRelatedPosts(cachedRelated);
+    }
+
+    const loadPost = async () => {
       try {
+        const shouldFetchRelated = cachedRelated.length === 0;
         const [postRes, relatedRes] = await Promise.all([
           fetch(`/api/posts/${encodeURIComponent(slug)}`).then((r) => r.json()).catch(() => null),
-          fetch('/api/posts?limit=6&offset=0').then((r) => r.json()).catch(() => null),
+          shouldFetchRelated
+            ? fetch('/api/posts?limit=6&offset=0').then((r) => r.json()).catch(() => null)
+            : Promise.resolve(null),
         ]);
 
+        if (cancelled) return;
+
         const loadedPost = postRes?.data || null;
-        setPost(loadedPost);
+        if (loadedPost) {
+          setPost(loadedPost);
+          seedPostsIntoCache([loadedPost]);
+        } else if (!cachedEntry?.post) {
+          setPost(null);
+        }
 
         if (Array.isArray(relatedRes?.data)) {
+          seedPostsIntoCache(relatedRes.data);
           setRelatedPosts(
             relatedRes.data.filter((p: any) => p.slug !== slug && p.id !== slug).slice(0, 4)
           );
         }
       } catch (err) {
-        console.error('Error loading blog post:', err);
+        if (!cancelled) {
+          console.error('Error loading blog post:', err);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     };
 
     loadPost();
+    return () => {
+      cancelled = true;
+    };
   }, [slug]);
 
   // Dynamically inject SEO title, meta description, keywords, OpenGraph & TechArticle JSON-LD
@@ -179,6 +235,8 @@ export function BlogPostPage() {
     }
   }, [post]);
 
+  const fallbackHeroMedia = useMemo(() => resolveArticleFallbackMedia(post), [post]);
+
   const handleShare = () => {
     const shareUrl = window.location.href;
     if (navigator.share && post) {
@@ -197,12 +255,12 @@ export function BlogPostPage() {
     }
   };
 
-  if (loading) {
+  if (loading && !post) {
     return (
-      <div className="flex flex-col items-center justify-center py-36 text-center">
-        <Loader2 className="h-10 w-10 animate-spin text-primary" />
-        <p className="mt-4 text-base font-medium text-foreground/80">Загрузка статьи...</p>
-      </div>
+      <BlogMascotLoader
+        title="Загрузка статьи..."
+        subtitle="Открываем полную публикацию блога Квайз"
+      />
     );
   }
 
@@ -219,7 +277,7 @@ export function BlogPostPage() {
             <LeafButton
               variant="primary"
               size="md"
-              onClick={() => navigate('/blog')}
+              onClick={handleBackToBlog}
               icon={<ArrowLeft size={16} />}
             >
               Вернуться в блог
@@ -257,7 +315,7 @@ export function BlogPostPage() {
         <LeafButton
           variant="glass"
           size="sm"
-          onClick={() => navigate('/blog')}
+          onClick={handleBackToBlog}
           icon={<ArrowLeft size={16} />}
         >
           Все статьи блога
@@ -361,7 +419,17 @@ export function BlogPostPage() {
             </div>
           )}
 
-          {/* Markdown Article Body (first media lives naturally inside contentMarkdown) */}
+          {/* Hero cover / single media when article markdown doesn't already embed media */}
+          {fallbackHeroMedia.length > 0 && (
+            <TgGalleryBlock
+              items={fallbackHeroMedia}
+              fallbackPostUrl={telegramUrl || undefined}
+              eagerFirst
+              defaultAlt={displayTitle}
+            />
+          )}
+
+          {/* Markdown Article Body */}
           <BlogArticleContent
             content={post.content}
             telegramPostUrl={post.telegram_post_url || post.source_url}
@@ -392,7 +460,7 @@ export function BlogPostPage() {
             <LeafButton
               variant="glass"
               size="md"
-              onClick={() => navigate('/blog')}
+              onClick={handleBackToBlog}
               icon={<ArrowLeft size={16} />}
             >
               Ко всем статьям
@@ -490,6 +558,9 @@ export function BlogPostPage() {
           </div>
         </section>
       )}
+
+      {/* Main Landing Page Footer */}
+      <SiteFooter />
     </div>
   );
 }

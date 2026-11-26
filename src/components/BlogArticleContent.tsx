@@ -57,11 +57,33 @@ function extractCodeMetaFromPre(
   return { language, rawText };
 }
 
+function normalizeInlineHtmlImages(raw: string): string {
+  const input = String(raw || '');
+  if (!input || !/<img\b/i.test(input)) return input;
+  const parts = input.split(/(```[\s\S]*?```)/g);
+  return parts
+    .map((part) => {
+      if (part.startsWith('```')) return part;
+      return part.replace(/<img\b([^>]*?)\s*\/?>/gi, (fullTag, attrs) => {
+        const srcMatch = String(attrs || '').match(/\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+        const rawSrc = srcMatch?.[1] || srcMatch?.[2] || srcMatch?.[3] || '';
+        const safeSrc = sanitizeBlogUrl(rawSrc);
+        if (!safeSrc) return fullTag;
+        const altMatch = String(attrs || '').match(/\balt\s*=\s*(?:"([^"]*)"|'([^']*)')/i);
+        const cleanAlt = (altMatch?.[1] || altMatch?.[2] || '').replace(/[\[\]]/g, '');
+        return `\n\n![${cleanAlt}](${safeSrc})\n\n`;
+      });
+    })
+    .join('');
+}
+
 export const BlogArticleContent: React.FC<BlogArticleContentProps> = ({
   content,
   telegramPostUrl,
   className = '',
 }) => {
+  const normalizedContent = React.useMemo(() => normalizeInlineHtmlImages(content), [content]);
+
   return (
     <div
       className={`max-w-none min-w-0 break-words text-foreground/90 leading-relaxed text-base md:text-lg ${className}`}
@@ -279,7 +301,7 @@ export const BlogArticleContent: React.FC<BlogArticleContentProps> = ({
           },
         }}
       >
-        {content || ''}
+        {normalizedContent}
       </ReactMarkdown>
     </div>
   );

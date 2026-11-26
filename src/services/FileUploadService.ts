@@ -2,6 +2,8 @@
 
 export const UPLOAD_URL = "https://file.pro-talk.ru/tgf";
 export const FILESTORE_URL = "https://filestore.pro-talk.ru/up";
+export const PROXY_FILE_UPLOAD_URL = "/api/files/upload-proxy";
+export const PROXY_URL_UPLOAD_URL = "/api/files/upload-url-proxy";
 export const STORAGE_KEY = "protalk_upload_token";
 export const FILES_MAP_KEY = "protalk_files_map";
 
@@ -75,9 +77,9 @@ export class FileUploadService {
     return this.parseRawUploadText(text);
   }
 
-  private uploadFormDataWithXhr(
+  private uploadPayloadWithXhr(
     endpoint: string,
-    formData: FormData,
+    payload: XMLHttpRequestBodyInit,
     headers: Record<string, string>,
     signal?: AbortSignal,
     onProgress?: (percent: number) => void
@@ -108,7 +110,7 @@ export class FileUploadService {
       if (xhr.upload && onProgress) {
         xhr.upload.onprogress = (ev) => {
           if (ev.lengthComputable && ev.total > 0) {
-            const pct = Math.min(90, Math.max(1, Math.round((ev.loaded / ev.total) * 85)));
+            const pct = Math.min(88, Math.max(1, Math.round((ev.loaded / ev.total) * 84)));
             onProgress(pct);
           }
         };
@@ -131,11 +133,11 @@ export class FileUploadService {
         reject(new Error('Загрузка отменена'));
       };
 
-      xhr.send(formData);
+      xhr.send(payload);
     });
   }
 
-  // Загрузка по URL
+  // Загрузка по URL через same-origin backend proxy (без CORS)
   async uploadFromUrl(url: string, onProgress?: (percent: number) => void): Promise<string> {
     if (onProgress) onProgress(15);
     if (url.includes('filestore.pro-talk.ru/') || url.includes('file.pro-talk.ru/')) {
@@ -143,12 +145,13 @@ export class FileUploadService {
       return url;
     }
     try {
-      const response = await fetch(UPLOAD_URL, {
+      const response = await fetch(PROXY_URL_UPLOAD_URL, {
         method: "POST",
         headers: {
+          "Content-Type": "application/json",
           "X-Upload-Token": this.token
         },
-        body: new URLSearchParams({ url })
+        body: JSON.stringify({ url, token: this.token })
       });
 
       if (onProgress) onProgress(85);
@@ -159,41 +162,38 @@ export class FileUploadService {
     return url;
   }
 
-  // Загрузка из File напрямую в облачное хранилище ProTalk (filestore.pro-talk.ru) с отслеживанием % прогресса
+  // Загрузка из File через same-origin backend proxy в ProTalk (filestore.pro-talk.ru / file.pro-talk.ru) без CORS
   async uploadFromFile(
     file: File,
     signal?: AbortSignal,
     onProgress?: (percent: number) => void
   ): Promise<string> {
-    const formData = new FormData();
-    formData.append("file", file);
-
+    const isPng = file.type === 'image/png' || file.name.toLowerCase().endsWith('.png');
     const headers: Record<string, string> = {
+      "Content-Type": "application/octet-stream",
+      "X-File-Name": encodeURIComponent(file.name || 'file'),
+      "X-File-Mime": file.type || 'application/octet-stream',
       "X-Upload-Token": this.token
     };
-
-    const isPng = file.type === 'image/png' || file.name.toLowerCase().endsWith('.png');
     if (isPng) {
       headers["X-Preserve-Alpha"] = "true";
     }
 
     if (onProgress) onProgress(5);
 
-    // Primary endpoint: filestore.pro-talk.ru/up returns direct https://filestore.pro-talk.ru/... URLs
-    const primaryUrl = await this.uploadFormDataWithXhr(FILESTORE_URL, formData, headers, signal, onProgress);
-    if (primaryUrl) {
+    const proxiedUrl = await this.uploadPayloadWithXhr(
+      PROXY_FILE_UPLOAD_URL,
+      file,
+      headers,
+      signal,
+      onProgress
+    );
+    if (proxiedUrl) {
       if (onProgress) onProgress(90);
-      return primaryUrl;
+      return proxiedUrl;
     }
 
-    // Fallback endpoint: file.pro-talk.ru/tgf
-    const fallbackUrl = await this.uploadFormDataWithXhr(UPLOAD_URL, formData, headers, signal, onProgress);
-    if (fallbackUrl) {
-      if (onProgress) onProgress(90);
-      return fallbackUrl;
-    }
-
-    throw new Error('Не удалось получить ссылку на файл из хранилища ProTalk');
+    throw new Error('Не удалось загрузить файл в облачное хранилище ProTalk');
   }
 
   // Загрузка из Blob

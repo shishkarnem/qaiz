@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'motion/react';
 import {
@@ -19,11 +19,24 @@ import {
 } from 'lucide-react';
 import { LeafButton } from '../components/ui/LeafButton';
 import { BubbleElement } from '../components/ui/BubbleElement';
+import { BlogMascotLoader } from '../components/blog/loaders/BlogMascotLoader';
 import {
   sanitizeBlogUrl,
   isVideoMediaUrl,
   normalizeDisplayCaps,
 } from '../components/blog/urlSafety';
+import {
+  BLOG_FEED_SOFT_TTL_MS,
+  buildBlogFeedFilterKey,
+  getBlogViewState,
+  getCachedBlogFeed,
+  getSavedBlogScrollY,
+  hasSavedBlogPosition,
+  isBlogRestorePending,
+  markBlogRestorePending,
+  setCachedBlogFeed,
+  updateBlogViewState,
+} from '../services/blog/blogCache';
 
 const INITIAL_BATCH_LIMIT = 20;
 const SCROLL_BATCH_LIMIT = 10;
@@ -108,17 +121,56 @@ interface CategoryStat {
 export function BlogPage() {
   const navigate = useNavigate();
 
-  const [posts, setPosts] = useState<any[]>([]);
-  const [totalPosts, setTotalPosts] = useState<number>(0);
-  const [hasMore, setHasMore] = useState<boolean>(false);
-  const [categories, setCategories] = useState<CategoryStat[]>([]);
-  const [initialLoading, setInitialLoading] = useState<boolean>(true);
+  // Synchronously read restore state + initial cached feed on first render so returning from a post is 0ms & flicker-free
+  const initialBootstrapRef = useRef<{
+    shouldRestore: boolean;
+    savedScrollY: number;
+    anchorPostId: string | null;
+    anchorViewportTop: number;
+    selectedGame: string;
+    selectedCategory: string;
+    searchQuery: string;
+    debouncedQuery: string;
+    cachedFeed: ReturnType<typeof getCachedBlogFeed>;
+  } | null>(null);
+
+  if (!initialBootstrapRef.current) {
+    const savedView = getBlogViewState();
+    const shouldRestore = isBlogRestorePending() || Boolean(savedView.shouldRestoreOnReturn && hasSavedBlogPosition());
+    const selectedGame = shouldRestore ? savedView.selectedGame : 'all';
+    const selectedCategory = shouldRestore ? savedView.selectedCategory : 'all';
+    const searchQuery = shouldRestore ? savedView.searchQuery : '';
+    const debouncedQuery = shouldRestore ? savedView.debouncedQuery : '';
+    const filterKey = buildBlogFeedFilterKey(selectedGame, selectedCategory, debouncedQuery);
+    const cachedFeed = getCachedBlogFeed(filterKey);
+
+    initialBootstrapRef.current = {
+      shouldRestore,
+      savedScrollY: shouldRestore ? getSavedBlogScrollY() : 0,
+      anchorPostId: shouldRestore ? savedView.anchorPostId : null,
+      anchorViewportTop: shouldRestore ? savedView.anchorViewportTop : 0,
+      selectedGame,
+      selectedCategory,
+      searchQuery,
+      debouncedQuery,
+      cachedFeed,
+    };
+  }
+
+  const bootstrap = initialBootstrapRef.current;
+  const hasBootCache = Boolean(bootstrap.cachedFeed && bootstrap.cachedFeed.posts.length > 0);
+
+  const [posts, setPosts] = useState<any[]>(() => bootstrap.cachedFeed?.posts || []);
+  const [totalPosts, setTotalPosts] = useState<number>(() => Number(bootstrap.cachedFeed?.total || 0));
+  const [hasMore, setHasMore] = useState<boolean>(() => Boolean(bootstrap.cachedFeed?.hasMore));
+  const [categories, setCategories] = useState<CategoryStat[]>(() => bootstrap.cachedFeed?.categories || []);
+  const [initialLoading, setInitialLoading] = useState<boolean>(() => !hasBootCache);
   const [loadingMore, setLoadingMore] = useState<boolean>(false);
 
-  const [selectedGame, setSelectedGame] = useState<string>('all');
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [searchQuery, setSearchQuery] = useState<string>('');
-  const [debouncedQuery, setDebouncedQuery] = useState<string>('');
+  const [selectedGame, setSelectedGame] = useState<string>(bootstrap.selectedGame);
+  const [selectedCategory, setSelectedCategory] = useState<string>(bootstrap.selectedCategory);
+  const [searchQuery, setSearchQuery] = useState<string>(bootstrap.searchQuery);
+  const [debouncedQuery, setDebouncedQuery] = useState<string>(bootstrap.debouncedQuery);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState<boolean>(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isDesktopLayout, setIsDesktopLayout] = useState<boolean>(() =>
@@ -127,7 +179,26 @@ export function BlogPage() {
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const activeAbortRef = useRef<AbortController | null>(null);
+  const activeRequestIdRef = useRef<number>(0);
   const isFetchingMoreRef = useRef<boolean>(false);
+  const lastKnownScrollYRef = useRef<number>(bootstrap.savedScrollY);
+  const navigatingAwayRef = useRef<boolean>(false);
+  const isRestoringScrollRef = useRef<boolean>(bootstrap.shouldRestore && (bootstrap.savedScrollY > 0 || Boolean(bootstrap.anchorPostId)));
+  const committedFilterKeyRef = useRef<string>(
+    buildBlogFeedFilterKey(bootstrap.selectedGame, bootstrap.selectedCategory, bootstrap.debouncedQuery)
+  );
+  const cachedAnimatedIdsRef = useRef<Set<string>>(
+    new Set((bootstrap.cachedFeed?.posts || []).map((p: any) => String(p.id || '')))
+  );
+
+  const postsRef = useRef<any[]>(posts);
+  postsRef.current = posts;
+  const totalPostsRef = useRef<number>(totalPosts);
+  totalPostsRef.current = totalPosts;
+  const hasMoreRef = useRef<boolean>(hasMore);
+  hasMoreRef.current = hasMore;
+  const categoriesRef = useRef<CategoryStat[]>(categories);
+  categoriesRef.current = categories;
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
@@ -138,25 +209,155 @@ export function BlogPage() {
     return () => mq.removeEventListener('change', onChange);
   }, []);
 
+  // Track and persist scroll position cleanly ONLY while actively viewing /blog
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let rafTimer: number | null = null;
+
+    const persistScroll = () => {
+      if (
+        navigatingAwayRef.current ||
+        isRestoringScrollRef.current ||
+        (window.location.pathname !== '/blog' && window.location.pathname !== '/blog/')
+      ) {
+        return;
+      }
+      const y = window.scrollY || document.documentElement?.scrollTop || 0;
+      lastKnownScrollYRef.current = Math.max(0, Math.round(y));
+      updateBlogViewState({
+        selectedGame,
+        selectedCategory,
+        searchQuery,
+        debouncedQuery,
+        scrollY: lastKnownScrollYRef.current,
+        anchorPostId: null,
+        anchorViewportTop: 0,
+      });
+    };
+
+    const onScroll = () => {
+      if (rafTimer !== null) return;
+      rafTimer = window.requestAnimationFrame(() => {
+        rafTimer = null;
+        persistScroll();
+      });
+    };
+
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      if (rafTimer !== null) {
+        window.cancelAnimationFrame(rafTimer);
+      }
+    };
+  }, [selectedGame, selectedCategory, searchQuery, debouncedQuery]);
+
+  // Restore exact scroll offset (and exact clicked post card anchor) when returning from a post page
+  useLayoutEffect(() => {
+    if (!bootstrap.shouldRestore || (bootstrap.savedScrollY <= 0 && !bootstrap.anchorPostId)) {
+      isRestoringScrollRef.current = false;
+      return;
+    }
+
+    isRestoringScrollRef.current = true;
+    let userInterrupted = false;
+    const onUserTouchOrWheel = () => {
+      userInterrupted = true;
+      isRestoringScrollRef.current = false;
+    };
+
+    window.addEventListener('wheel', onUserTouchOrWheel, { passive: true, once: true });
+    window.addEventListener('touchmove', onUserTouchOrWheel, { passive: true, once: true });
+
+    const computeTargetY = () => {
+      if (bootstrap.anchorPostId) {
+        const anchorEl = document.querySelector<HTMLElement>(
+          `[data-blog-post-id="${bootstrap.anchorPostId}"]`
+        );
+        if (anchorEl) {
+          const rect = anchorEl.getBoundingClientRect();
+          const currentY = window.scrollY || document.documentElement?.scrollTop || 0;
+          const desiredViewportTop = bootstrap.anchorViewportTop || 110;
+          return Math.max(0, Math.round(currentY + rect.top - desiredViewportTop));
+        }
+      }
+      return bootstrap.savedScrollY;
+    };
+
+    const applyScroll = () => {
+      if (userInterrupted) return;
+      const targetY = computeTargetY();
+      window.scrollTo({ top: targetY, left: 0, behavior: 'instant' as ScrollBehavior });
+      if (document.documentElement) document.documentElement.scrollTop = targetY;
+      if (document.body) document.body.scrollTop = targetY;
+      lastKnownScrollYRef.current = targetY;
+    };
+
+    applyScroll();
+    const raf1 = window.requestAnimationFrame(() => applyScroll());
+    const t1 = window.setTimeout(() => applyScroll(), 60);
+    const t2 = window.setTimeout(() => {
+      applyScroll();
+      isRestoringScrollRef.current = false;
+      markBlogRestorePending(false);
+    }, 220);
+
+    return () => {
+      window.cancelAnimationFrame(raf1);
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+      window.removeEventListener('wheel', onUserTouchOrWheel);
+      window.removeEventListener('touchmove', onUserTouchOrWheel);
+    };
+  }, [bootstrap.shouldRestore, bootstrap.savedScrollY, bootstrap.anchorPostId, bootstrap.anchorViewportTop]);
+
   // Debounce search input to optimize server queries
   useEffect(() => {
+    const trimmed = searchQuery.trim();
+    if (trimmed === debouncedQuery) return;
     const timer = setTimeout(() => {
-      setDebouncedQuery(searchQuery.trim());
+      setDebouncedQuery(trimmed);
     }, 300);
     return () => clearTimeout(timer);
-  }, [searchQuery]);
+  }, [searchQuery, debouncedQuery]);
+
+  // Persist filter selections ONLY when the user actually changes filters (StrictMode safe)
+  const currentFilterKey = buildBlogFeedFilterKey(selectedGame, selectedCategory, debouncedQuery);
+  useEffect(() => {
+    if (committedFilterKeyRef.current === currentFilterKey) {
+      return;
+    }
+    committedFilterKeyRef.current = currentFilterKey;
+    lastKnownScrollYRef.current = 0;
+    isRestoringScrollRef.current = false;
+    updateBlogViewState({
+      selectedGame,
+      selectedCategory,
+      searchQuery,
+      debouncedQuery,
+      scrollY: 0,
+      anchorPostId: null,
+      anchorViewportTop: 0,
+      shouldRestoreOnReturn: false,
+    });
+  }, [currentFilterKey, selectedGame, selectedCategory, searchQuery, debouncedQuery]);
 
   const fetchBatch = useCallback(
-    async (opts: { offset: number; limit: number; append: boolean }) => {
+    async (opts: { offset: number; limit: number; append: boolean; silent?: boolean }) => {
       if (opts.append && isFetchingMoreRef.current) return;
       if (!opts.append && activeAbortRef.current) {
         activeAbortRef.current.abort();
       }
 
       const controller = new AbortController();
+      const requestId = ++activeRequestIdRef.current;
+      const filterKey = buildBlogFeedFilterKey(selectedGame, selectedCategory, debouncedQuery);
+
       if (!opts.append) {
         activeAbortRef.current = controller;
-        setInitialLoading(true);
+        if (!opts.silent) {
+          setInitialLoading(true);
+        }
       } else {
         isFetchingMoreRef.current = true;
         setLoadingMore(true);
@@ -182,29 +383,54 @@ export function BlogPage() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
 
+        // Ignore stale response if a newer initial fetch was started
+        if (!opts.append && activeRequestIdRef.current !== requestId) {
+          return;
+        }
+
         const incoming: any[] = Array.isArray(json.data) ? json.data : [];
+        const nextTotal = Number(json.total ?? incoming.length);
+        const nextHasMore = Boolean(json.hasMore);
+        const nextCategories = Array.isArray(json.categories)
+          ? json.categories
+          : categoriesRef.current;
+
+        let mergedPosts = incoming;
         if (opts.append) {
-          setPosts((prev) => {
-            const existingIds = new Set(prev.map((item) => item.id));
-            const uniqueNew = incoming.filter((item) => !existingIds.has(item.id));
-            return [...prev, ...uniqueNew];
-          });
+          const existingIds = new Set(postsRef.current.map((item) => item.id));
+          const uniqueNew = incoming.filter((item) => !existingIds.has(item.id));
+          mergedPosts = [...postsRef.current, ...uniqueNew];
+          setPosts(mergedPosts);
+        } else if (opts.silent && postsRef.current.length > incoming.length) {
+          const incomingIds = new Set(incoming.map((item) => item.id));
+          const remainingTail = postsRef.current.filter((item) => !incomingIds.has(item.id));
+          mergedPosts = [...incoming, ...remainingTail];
+          setPosts(mergedPosts);
         } else {
           setPosts(incoming);
         }
 
-        setTotalPosts(Number(json.total ?? incoming.length));
-        setHasMore(Boolean(json.hasMore));
+        setTotalPosts(nextTotal);
+        setHasMore(nextHasMore);
         if (Array.isArray(json.categories)) {
           setCategories(json.categories);
         }
+
+        setCachedBlogFeed(filterKey, {
+          posts: mergedPosts,
+          total: nextTotal,
+          hasMore: nextHasMore,
+          categories: nextCategories,
+        });
       } catch (err: any) {
         if (err?.name !== 'AbortError') {
           console.error('Error fetching blog batch:', err);
         }
       } finally {
         if (!opts.append) {
-          setInitialLoading(false);
+          if (activeRequestIdRef.current === requestId) {
+            setInitialLoading(false);
+          }
         } else {
           isFetchingMoreRef.current = false;
           setLoadingMore(false);
@@ -214,13 +440,37 @@ export function BlogPage() {
     [selectedGame, selectedCategory, debouncedQuery]
   );
 
-  // Initial load & filter changes -> max 20 items per initial page load
+  // Initial load & filter changes -> use cache instantly + silent SWR refresh when needed
   useEffect(() => {
-    fetchBatch({ offset: 0, limit: INITIAL_BATCH_LIMIT, append: false });
+    const filterKey = buildBlogFeedFilterKey(selectedGame, selectedCategory, debouncedQuery);
+    const cached = getCachedBlogFeed(filterKey);
+
+    if (cached && cached.posts.length > 0) {
+      setPosts(cached.posts);
+      setTotalPosts(cached.total);
+      setHasMore(cached.hasMore);
+      if (cached.categories.length > 0) {
+        setCategories(cached.categories);
+      }
+      setInitialLoading(false);
+
+      const cacheAgeMs = Date.now() - Number(cached.cachedAt || 0);
+      const needsRefresh = bootstrap.shouldRestore
+        ? cacheAgeMs > 10 * 60 * 1000
+        : cacheAgeMs > BLOG_FEED_SOFT_TTL_MS;
+      if (needsRefresh) {
+        const refreshLimit = Math.min(100, Math.max(INITIAL_BATCH_LIMIT, cached.posts.length));
+        fetchBatch({ offset: 0, limit: refreshLimit, append: false, silent: true });
+      }
+    } else {
+      setPosts([]);
+      fetchBatch({ offset: 0, limit: INITIAL_BATCH_LIMIT, append: false, silent: false });
+    }
+
     return () => {
       activeAbortRef.current?.abort();
     };
-  }, [fetchBatch]);
+  }, [selectedGame, selectedCategory, debouncedQuery, fetchBatch, bootstrap.shouldRestore]);
 
   const handleLoadNextBatch = useCallback(() => {
     if (!hasMore || initialLoading || loadingMore || isFetchingMoreRef.current) return;
@@ -288,6 +538,44 @@ export function BlogPage() {
     };
   }, [posts]);
 
+  const saveBlogPositionForPost = useCallback(
+    (postId?: string) => {
+      navigatingAwayRef.current = true;
+      const y = window.scrollY || document.documentElement?.scrollTop || lastKnownScrollYRef.current || 0;
+      const roundedY = Math.max(0, Math.round(y));
+      lastKnownScrollYRef.current = roundedY;
+
+      let anchorPostId: string | null = postId ? String(postId) : null;
+      let anchorViewportTop = 0;
+      if (anchorPostId && typeof document !== 'undefined') {
+        const el = document.querySelector<HTMLElement>(`[data-blog-post-id="${anchorPostId}"]`);
+        if (el) {
+          anchorViewportTop = Math.round(el.getBoundingClientRect().top);
+        }
+      }
+
+      updateBlogViewState({
+        selectedGame,
+        selectedCategory,
+        searchQuery,
+        debouncedQuery,
+        scrollY: roundedY,
+        anchorPostId,
+        anchorViewportTop,
+        shouldRestoreOnReturn: true,
+      });
+    },
+    [selectedGame, selectedCategory, searchQuery, debouncedQuery]
+  );
+
+  const handleOpenPost = useCallback(
+    (postId: string, postSlugOrId: string) => {
+      saveBlogPositionForPost(postId);
+      navigate(`/blog/${postSlugOrId}`);
+    },
+    [saveBlogPositionForPost, navigate]
+  );
+
   const handleSharePost = (post: any) => {
     const postUrl = `${window.location.origin}/blog/${post.slug || post.id}`;
     const displayTitle = normalizeDisplayCaps(post.title);
@@ -332,15 +620,17 @@ export function BlogPage() {
     const publishedDate = new Date(post.published_at || post.created_at || Date.now()).toLocaleDateString('ru-RU');
     const priorityRank = !post.external_id ? PRIORITY_GAME_IDS.indexOf(String(post.game_id || '')) + 1 : 0;
     const isPinnedPost = Number(post.is_pinned || 0) === 1;
+    const skipEntranceAnim = cachedAnimatedIdsRef.current.has(String(post.id || ''));
 
     return (
       <motion.article
         key={`blog-post-${post.id || globalIdx}`}
-        initial={{ opacity: 0, y: 18, scale: 0.985 }}
+        data-blog-post-id={String(post.id || postSlugOrId)}
+        initial={skipEntranceAnim ? false : { opacity: 0, y: 18, scale: 0.985 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{
-          duration: 0.34,
-          delay: Math.min((globalIdx % SCROLL_BATCH_LIMIT) * 0.04, 0.28),
+          duration: skipEntranceAnim ? 0 : 0.34,
+          delay: skipEntranceAnim ? 0 : Math.min((globalIdx % SCROLL_BATCH_LIMIT) * 0.04, 0.28),
           ease: [0.22, 1, 0.36, 1],
         }}
         whileHover={{ y: -3 }}
@@ -353,6 +643,7 @@ export function BlogPage() {
         {hasCardMedia && (
           <Link
             to={`/blog/${postSlugOrId}`}
+            onClick={() => saveBlogPositionForPost(String(post.id || postSlugOrId))}
             className={`block relative w-full ${
               isLeft ? preset.mediaHeightLeft : preset.mediaHeightRight
             } overflow-hidden border-b-2 border-primary/30 group`}
@@ -450,7 +741,11 @@ export function BlogPage() {
           </div>
 
           {/* Title */}
-          <Link to={`/blog/${postSlugOrId}`} className="no-underline block group">
+          <Link
+            to={`/blog/${postSlugOrId}`}
+            onClick={() => saveBlogPositionForPost(String(post.id || postSlugOrId))}
+            className="no-underline block group"
+          >
             <h2
               className={`${
                 isLeft ? 'text-xl sm:text-3xl' : 'text-lg sm:text-2xl'
@@ -477,7 +772,7 @@ export function BlogPage() {
               <LeafButton
                 variant="primary"
                 size="sm"
-                onClick={() => navigate(`/blog/${postSlugOrId}`)}
+                onClick={() => handleOpenPost(String(post.id || postSlugOrId), postSlugOrId)}
                 icon={<BookOpen size={15} />}
               >
                 Открыть статью полностью
@@ -527,6 +822,8 @@ export function BlogPage() {
       </motion.article>
     );
   };
+
+  const showMascotLoader = initialLoading || (searchQuery.trim() !== debouncedQuery && posts.length === 0);
 
   return (
     <div className="w-full max-w-none py-4 pb-24 space-y-6">
@@ -626,13 +923,11 @@ export function BlogPage() {
       </div>
 
       {/* Main Content */}
-      {initialLoading ? (
-        <div className="flex flex-col items-center justify-center py-32 text-center">
-          <Loader2 className="h-10 w-10 animate-spin text-primary" />
-          <p className="mt-4 text-base font-medium text-foreground/80">
-            Загрузка первой подборки статей...
-          </p>
-        </div>
+      {showMascotLoader ? (
+        <BlogMascotLoader
+          title="Загрузка статей блога..."
+          subtitle="Подбираем свежие материалы и гайды Квайз"
+        />
       ) : posts.length > 0 ? (
         <>
           {isDesktopLayout ? (
@@ -691,6 +986,7 @@ export function BlogPage() {
                 setSelectedGame('all');
                 setSelectedCategory('all');
                 setSearchQuery('');
+                setDebouncedQuery('');
               }}
             >
               Сбросить фильтры

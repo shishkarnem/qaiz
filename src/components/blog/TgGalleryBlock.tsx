@@ -7,16 +7,30 @@ import { TgVideoBlock } from './TgVideoBlock';
 interface TgGalleryBlockProps {
   items: TgMediaItem[];
   fallbackPostUrl?: string;
+  eagerFirst?: boolean;
+  defaultAlt?: string;
 }
 
-export const TgGalleryBlock: React.FC<TgGalleryBlockProps> = ({ items, fallbackPostUrl }) => {
+export const TgGalleryBlock: React.FC<TgGalleryBlockProps> = ({
+  items,
+  fallbackPostUrl,
+  eagerFirst = false,
+  defaultAlt,
+}) => {
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
+  const [failedUrls, setFailedUrls] = useState<Record<string, boolean>>({});
 
   const normalizedItems = Array.isArray(items) ? items : [];
-  const photoItems = normalizedItems.filter(
-    (m) => m?.type === 'photo' && sanitizeBlogUrl(m?.url) && !isVideoMediaUrl(m?.url)
-  );
-  const videoItems = normalizedItems.filter((m) => m?.type === 'video' || isVideoMediaUrl(m?.url));
+  const photoItems = normalizedItems.filter((m) => {
+    const safe = sanitizeBlogUrl(m?.url);
+    if (!safe || isVideoMediaUrl(safe) || failedUrls[safe]) return false;
+    const t = String(m?.type || '').toLowerCase();
+    return !t || t === 'photo' || t === 'image';
+  });
+  const videoItems = normalizedItems.filter((m) => {
+    const t = String(m?.type || '').toLowerCase();
+    return t === 'video' || isVideoMediaUrl(m?.url);
+  });
 
   useEffect(() => {
     if (lightboxIdx === null) return;
@@ -47,6 +61,7 @@ export const TgGalleryBlock: React.FC<TgGalleryBlockProps> = ({ items, fallbackP
           {photoItems.map((photo, idx) => {
             const safeUrl = sanitizeBlogUrl(photo.url);
             const captionText = normalizeDisplayCaps(photo.caption);
+            const altText = captionText || defaultAlt || `Фото ${idx + 1}`;
             return (
               <div
                 key={`tg-photo-${idx}-${safeUrl.slice(-16)}`}
@@ -64,12 +79,15 @@ export const TgGalleryBlock: React.FC<TgGalleryBlockProps> = ({ items, fallbackP
                 <div className={photoItems.length === 1 ? 'w-full' : 'aspect-[4/3] w-full overflow-hidden'}>
                   <img
                     src={safeUrl}
-                    alt={captionText || `Фото ${idx + 1}`}
+                    alt={altText}
                     className={`w-full ${
-                      photoItems.length === 1 ? 'max-h-[540px] object-contain' : 'h-full object-cover'
+                      photoItems.length === 1 ? 'max-h-[540px] object-contain mx-auto' : 'h-full object-cover'
                     } group-hover:scale-[1.03] transition-transform duration-300 block`}
-                    loading="lazy"
+                    loading={eagerFirst && idx === 0 ? 'eager' : 'lazy'}
                     referrerPolicy="no-referrer"
+                    onError={() =>
+                      setFailedUrls((prev) => (prev[safeUrl] ? prev : { ...prev, [safeUrl]: true }))
+                    }
                   />
                 </div>
                 <div className="pointer-events-none absolute top-3 right-3 opacity-85 group-hover:opacity-100 transition-opacity">

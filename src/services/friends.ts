@@ -105,12 +105,19 @@ export const friendsService = {
 
   async sendHeartbeat(userId: string): Promise<void> {
     if (!userId) return;
-    try {
-      await fetch('/api/users/heartbeat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId })
-      });
-    } catch (_) {}
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+    const url = `/api/users/heartbeat?userId=${encodeURIComponent(userId)}&_=${Date.now()}`;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetch(url, {
+          method: 'GET',
+          cache: 'no-store',
+        });
+        if (res.ok || attempt === 1) return;
+      } catch (_) {
+        if (attempt === 1) return;
+        await new Promise((r) => setTimeout(r, 350));
+      }
+    }
   }
 };

@@ -35,6 +35,7 @@ sw.addEventListener('activate', (event: any) => {
     (async () => {
       if (typeof caches !== 'undefined') {
         await caches.delete('qaiz-static-assets-v1').catch(() => {});
+        await caches.delete('qaiz-local-images-v1').catch(() => {});
       }
       const clientsApi = sw.clients as any;
       if (clientsApi && typeof clientsApi.claim === 'function') {
@@ -44,13 +45,21 @@ sw.addEventListener('activate', (event: any) => {
   );
 });
 
-// Cache local images and icons with CacheFirst
+// Cache local images and icons with CacheFirst (only valid 200 image/* responses, never HTML fallbacks)
 registerRoute(
   ({ request, url }) =>
-    request.destination === 'image' && url.origin === sw.location.origin,
+    (request.destination === 'image' || /\.(png|jpg|jpeg|webp|ico|svg)$/i.test(url.pathname)) &&
+    url.origin === sw.location.origin,
   new CacheFirst({
-    cacheName: 'qaiz-local-images-v1',
+    cacheName: 'qaiz-local-images-v2',
     plugins: [
+      {
+        cacheWillUpdate: async ({ response }: { response: Response }) => {
+          if (!response || response.status !== 200) return null;
+          const ct = (response.headers.get('content-type') || '').toLowerCase();
+          return ct.startsWith('image/') ? response : null;
+        },
+      },
       new ExpirationPlugin({
         maxEntries: 60,
         maxAgeSeconds: 30 * 24 * 60 * 60,

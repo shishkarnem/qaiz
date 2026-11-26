@@ -1,7 +1,170 @@
 import { Router, Request } from 'express';
+import fs from 'fs';
+import path from 'path';
+import sharp from 'sharp';
 import { getAll } from '../db';
+import { DIRECT_MEDIA_URLS } from '../../shared/mediaUrls';
 
 export const seoRouter = Router();
+
+interface PwaMediaSpec {
+  width: number;
+  height: number;
+  format: 'png' | 'jpeg';
+  sourceKind: 'logo' | 'banner';
+  maskable?: boolean;
+}
+
+const PWA_MEDIA_SPECS: Record<string, PwaMediaSpec> = {
+  'icon-48x48.png': { width: 48, height: 48, format: 'png', sourceKind: 'logo' },
+  'icon-96x96.png': { width: 96, height: 96, format: 'png', sourceKind: 'logo' },
+  'icon-120x120.png': { width: 120, height: 120, format: 'png', sourceKind: 'logo' },
+  'icon-144x144.png': { width: 144, height: 144, format: 'png', sourceKind: 'logo' },
+  'pwa-192x192.png': { width: 192, height: 192, format: 'png', sourceKind: 'logo' },
+  'pwa-512x512.png': { width: 512, height: 512, format: 'png', sourceKind: 'logo' },
+  'pwa-maskable-512x512.png': { width: 512, height: 512, format: 'png', sourceKind: 'logo', maskable: true },
+  'apple-touch-icon.png': { width: 180, height: 180, format: 'png', sourceKind: 'logo' },
+  'apple-touch-icon-152x152.png': { width: 152, height: 152, format: 'png', sourceKind: 'logo' },
+  'apple-touch-icon-167x167.png': { width: 167, height: 167, format: 'png', sourceKind: 'logo' },
+  'mstile-150x150.png': { width: 150, height: 150, format: 'png', sourceKind: 'logo' },
+  'mstile-310x150.png': { width: 310, height: 150, format: 'png', sourceKind: 'banner' },
+  'yandex-tableau-73x73.png': { width: 73, height: 73, format: 'png', sourceKind: 'logo' },
+  'favicon.ico': { width: 48, height: 48, format: 'png', sourceKind: 'logo' },
+  'og-banner.jpg': { width: 1200, height: 630, format: 'jpeg', sourceKind: 'banner' },
+  'QaizSocial.jpg': { width: 1200, height: 594, format: 'jpeg', sourceKind: 'banner' },
+};
+
+const mediaBufferCache = new Map<string, Buffer>();
+const masterSourceCache = new Map<'logo' | 'banner', Buffer>();
+
+async function getMasterMediaBuffer(kind: 'logo' | 'banner'): Promise<Buffer | null> {
+  const cached = masterSourceCache.get(kind);
+  if (cached) return cached;
+
+  const url = kind === 'logo' ? DIRECT_MEDIA_URLS.MINI_LOGO : DIRECT_MEDIA_URLS.SOCIAL_COVER;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    if (res.ok) {
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length > 0) {
+        masterSourceCache.set(kind, buf);
+        return buf;
+      }
+    }
+  } catch (err) {
+    console.warn(`[PWA Media Fallback] Failed fetching ${kind}:`, err);
+  }
+  return null;
+}
+
+async function resolveOrSynthesizeMediaBuffer(fileName: string, spec: PwaMediaSpec): Promise<Buffer> {
+  const cached = mediaBufferCache.get(fileName);
+  if (cached) return cached;
+
+  const diskCandidates = [
+    path.join(process.cwd(), 'dist', fileName),
+    path.join(process.cwd(), 'public', fileName),
+  ];
+
+  for (const candidatePath of diskCandidates) {
+    try {
+      if (fs.existsSync(candidatePath)) {
+        const diskBuf = await fs.promises.readFile(candidatePath);
+        if (diskBuf.length > 0) {
+          mediaBufferCache.set(fileName, diskBuf);
+          return diskBuf;
+        }
+      }
+    } catch (_) {}
+  }
+
+  let outputBuf: Buffer | null = null;
+  const masterBuf = await getMasterMediaBuffer(spec.sourceKind);
+
+  if (masterBuf) {
+    try {
+      let pipeline = sharp(masterBuf);
+      if (spec.maskable) {
+        const innerSize = Math.round(Math.min(spec.width, spec.height) * 0.72);
+        const padX = Math.floor((spec.width - innerSize) / 2);
+        const padY = Math.floor((spec.height - innerSize) / 2);
+        const innerPng = await pipeline
+          .resize(innerSize, innerSize, {
+            fit: 'contain',
+            background: { r: 11, g: 16, b: 27, alpha: 1 },
+          })
+          .png()
+          .toBuffer();
+        pipeline = sharp(innerPng).extend({
+          top: padY,
+          bottom: spec.height - innerSize - padY,
+          left: padX,
+          right: spec.width - innerSize - padX,
+          background: { r: 11, g: 16, b: 27, alpha: 1 },
+        });
+      } else if (spec.sourceKind === 'banner') {
+        pipeline = pipeline.resize(spec.width, spec.height, { fit: 'cover', position: 'center' });
+      } else {
+        pipeline = pipeline.resize(spec.width, spec.height, {
+          fit: 'contain',
+          background: { r: 11, g: 16, b: 27, alpha: 0 },
+        });
+      }
+
+      outputBuf =
+        spec.format === 'jpeg'
+          ? await pipeline.jpeg({ quality: 88 }).toBuffer()
+          : await pipeline.png().toBuffer();
+    } catch (err) {
+      console.warn(`[PWA Media Fallback] Sharp resize failed for ${fileName}:`, err);
+    }
+  }
+
+  if (!outputBuf) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${spec.width}" height="${spec.height}" viewBox="0 0 100 100">
+      <rect width="100" height="100" rx="22" fill="#0b101b"/>
+      <circle cx="50" cy="50" r="34" fill="none" stroke="#83c42e" stroke-width="10"/>
+      <path d="M56 56 L76 76" stroke="#83c42e" stroke-width="10" stroke-linecap="round"/>
+    </svg>`;
+    const fallbackPipeline = sharp(Buffer.from(svg)).resize(spec.width, spec.height);
+    outputBuf =
+      spec.format === 'jpeg'
+        ? await fallbackPipeline.jpeg({ quality: 88 }).toBuffer()
+        : await fallbackPipeline.png().toBuffer();
+  }
+
+  mediaBufferCache.set(fileName, outputBuf);
+
+  try {
+    const distDir = path.join(process.cwd(), 'dist');
+    if (fs.existsSync(distDir)) {
+      await fs.promises.writeFile(path.join(distDir, fileName), outputBuf).catch(() => {});
+    }
+  } catch (_) {}
+
+  return outputBuf;
+}
+
+for (const [fileName, spec] of Object.entries(PWA_MEDIA_SPECS)) {
+  seoRouter.get(`/${fileName}`, async (_req, res) => {
+    try {
+      const buf = await resolveOrSynthesizeMediaBuffer(fileName, spec);
+      const contentType =
+        fileName.endsWith('.ico')
+          ? 'image/x-icon'
+          : spec.format === 'jpeg'
+          ? 'image/jpeg'
+          : 'image/png';
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Length', String(buf.length));
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      res.send(buf);
+    } catch (err: any) {
+      console.error(`[PWA Icon Route Error] ${fileName}:`, err?.message || err);
+      res.status(500).end();
+    }
+  });
+}
 
 function escapeXml(str: string): string {
   return String(str || '')

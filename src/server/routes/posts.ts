@@ -6,6 +6,13 @@ import {
   getLastSavRssSyncStatus,
   syncSavRssFeed,
 } from '../blog/savRssSync';
+import {
+  getCachedPostsFeed,
+  setCachedPostsFeed,
+  getCachedPostByKey,
+  setCachedPostRecord,
+  invalidatePostsMemoryCache,
+} from '../blog/postsMemoryCache';
 
 export const postsRouter = Router();
 
@@ -64,6 +71,15 @@ postsRouter.get('/', async (req, res) => {
       pIdx++;
     }
 
+    const feedCacheKey = `${gameId}|${category.toLowerCase()}|${q.toLowerCase()}|${limit}|${offset}`;
+    const cachedFeed = getCachedPostsFeed(feedCacheKey);
+    if (cachedFeed) {
+      return res.json({
+        ...cachedFeed,
+        syncStatus: getLastSavRssSyncStatus(),
+      });
+    }
+
     const whereSql = conditions.join(' AND ');
 
     const [countRow, pinnedCountRow, posts, categoriesRows] = await Promise.all([
@@ -101,7 +117,7 @@ postsRouter.get('/', async (req, res) => {
     const pinnedCount = Number(pinnedCountRow?.cnt || 0);
     const hasMore = offset + posts.length < total;
 
-    res.json({
+    const payload = {
       data: posts,
       total,
       limit,
@@ -110,6 +126,14 @@ postsRouter.get('/', async (req, res) => {
       pinnedCount,
       maxPinned: 10,
       categories: categoriesRows,
+    };
+    setCachedPostsFeed(feedCacheKey, payload);
+    for (const p of posts) {
+      setCachedPostRecord(p);
+    }
+
+    res.json({
+      ...payload,
       syncStatus: getLastSavRssSyncStatus(),
     });
   } catch (err: any) {
@@ -134,6 +158,7 @@ postsRouter.post('/sync-rss', requireSuperAdmin, async (req, res) => {
         ? req.query.category
         : undefined;
     const result = await syncSavRssFeed({ limit, category });
+    invalidatePostsMemoryCache();
     if (!result.success) {
       return res.status(502).json(result);
     }
@@ -147,6 +172,13 @@ postsRouter.get('/:slugOrId', async (req, res) => {
   try {
     await ensureBlogRssSchema().catch(() => {});
     const { slugOrId } = req.params;
+    const cachedPost = getCachedPostByKey(slugOrId);
+    if (cachedPost) {
+      cachedPost.views_count = (cachedPost.views_count || 0) + 1;
+      void runSql('UPDATE posts SET views_count = COALESCE(views_count, 0) + 1 WHERE id = $1', [cachedPost.id]).catch(() => {});
+      return res.json({ data: cachedPost });
+    }
+
     const post = await getOne(
       'SELECT * FROM posts WHERE slug = $1 OR id = $2 LIMIT 1',
       [slugOrId, slugOrId]
@@ -155,10 +187,9 @@ postsRouter.get('/:slugOrId', async (req, res) => {
       return res.status(404).json({ error: 'Статья не найдена' });
     }
 
-    try {
-      await runSql('UPDATE posts SET views_count = COALESCE(views_count, 0) + 1 WHERE id = $1', [post.id]);
-      post.views_count = (post.views_count || 0) + 1;
-    } catch (_) {}
+    post.views_count = (post.views_count || 0) + 1;
+    setCachedPostRecord(post);
+    void runSql('UPDATE posts SET views_count = COALESCE(views_count, 0) + 1 WHERE id = $1', [post.id]).catch(() => {});
 
     res.json({ data: post });
   } catch (err: any) {
@@ -208,6 +239,8 @@ postsRouter.post('/:id/pin', requireSuperAdmin, async (req, res) => {
       getOne<{ cnt: number }>('SELECT COUNT(*)::int AS cnt FROM posts WHERE COALESCE(is_pinned, 0) = 1'),
     ]);
 
+    invalidatePostsMemoryCache();
+
     res.json({
       success: true,
       data: updated,
@@ -228,6 +261,7 @@ postsRouter.post('/:id/like', async (req, res) => {
     }
     await runSql('UPDATE posts SET likes_count = COALESCE(likes_count, 0) + 1 WHERE id = $1', [post.id]);
     const updated = await getOne('SELECT * FROM posts WHERE id = $1', [post.id]);
+    invalidatePostsMemoryCache();
     res.json({ data: updated });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -286,6 +320,7 @@ postsRouter.post('/', async (req, res) => {
     );
 
     const created = await getOne('SELECT * FROM posts WHERE id = $1', [id]);
+    invalidatePostsMemoryCache();
     res.json({ data: created });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -349,6 +384,7 @@ postsRouter.put('/:id', async (req, res) => {
     );
 
     const updated = await getOne('SELECT * FROM posts WHERE id = $1', [id]);
+    invalidatePostsMemoryCache();
     res.json({ data: updated });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -359,6 +395,7 @@ postsRouter.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     await runSql('DELETE FROM posts WHERE id = $1', [id]);
+    invalidatePostsMemoryCache();
     res.json({ message: 'Пост удален' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

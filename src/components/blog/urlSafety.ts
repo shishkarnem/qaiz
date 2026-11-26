@@ -148,3 +148,100 @@ export function normalizeDisplayCaps(text?: string | null): string {
     })
     .join('');
 }
+
+export function hasLeadingArticleMedia(content?: string | null): boolean {
+  const raw = String(content || '');
+  if (!raw.trim()) return false;
+
+  const visibleBody = raw
+    .replace(/```tg-collapse[\s\S]*?```/gi, '')
+    .replace(/```tg-buttons[\s\S]*?```/gi, '')
+    .trim();
+
+  if (!visibleBody) return false;
+
+  // Immediate media fence or image at the very start of the body
+  if (/^(?:!\[[^\]]*\]\([^)]+\)|<figure\b[^>]*>[\s\S]*?<img\b|<img\b[^>]*\bsrc\s*=|```tg-gallery\b|```tg-video\b)/i.test(visibleBody)) {
+    return true;
+  }
+
+  // Check lines before the first substantial non-heading prose paragraph
+  const lines = visibleBody.split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || /^---+$/.test(line)) continue;
+    if (/^#{1,6}\s+/.test(line)) continue;
+    if (/^(?:!\[[^\]]*\]\([^)]+\)|<figure\b[^>]*>.*<img\b|<img\b[^>]*\bsrc\s*=|```tg-gallery\b|```tg-video\b)/i.test(line)) {
+      return true;
+    }
+    // Reached first prose paragraph before any media -> hero cover is not at top
+    return false;
+  }
+
+  return false;
+}
+
+export function hasInlineArticleMedia(content?: string | null): boolean {
+  return hasLeadingArticleMedia(content);
+}
+
+export function parseTgMediaJson(rawMediaJson: unknown): TgMediaItem[] {
+  if (!rawMediaJson) return [];
+  let parsed: unknown = rawMediaJson;
+  if (typeof rawMediaJson === 'string') {
+    const trimmed = rawMediaJson.trim();
+    if (!trimmed) return [];
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((item): item is TgMediaItem => {
+    if (!item || typeof item !== 'object') return false;
+    const url = sanitizeBlogUrl((item as TgMediaItem).url);
+    const postUrl = sanitizeBlogUrl((item as TgMediaItem).postUrl);
+    return Boolean(url || ((item as TgMediaItem).tooLarge && postUrl));
+  });
+}
+
+export function resolveArticleFallbackMedia(post: any): TgMediaItem[] {
+  if (!post || hasLeadingArticleMedia(post.content)) {
+    return [];
+  }
+
+  const telegramPostUrl = sanitizeBlogUrl(post.telegram_post_url || post.source_url);
+  const mediaItems = parseTgMediaJson(post.media_json);
+  if (mediaItems.length > 0) {
+    return mediaItems;
+  }
+
+  const coverVideoUrl = sanitizeBlogUrl(post.cover_video_url);
+  const rawCoverImg = sanitizeBlogUrl(post.cover_image_url || post.image_url);
+  const coverImageUrl = rawCoverImg && !isVideoMediaUrl(rawCoverImg) ? rawCoverImg : '';
+
+  if (coverVideoUrl) {
+    return [
+      {
+        type: 'video',
+        url: coverVideoUrl,
+        posterUrl: coverImageUrl || undefined,
+        postUrl: telegramPostUrl || undefined,
+      },
+    ];
+  }
+
+  if (coverImageUrl) {
+    return [
+      {
+        type: 'photo',
+        url: coverImageUrl,
+        postUrl: telegramPostUrl || undefined,
+      },
+    ];
+  }
+
+  return [];
+}
+

@@ -246,6 +246,50 @@ export async function sendTelegramMessage(options: {
   return { ok: false, error: lastError, blocked: isTelegramBotBlockedError(lastError) };
 }
 
+export async function setTelegramWebhook(options: {
+  webhookUrl: string;
+  botToken?: string;
+  apiBaseUrl?: string;
+  timeoutMs?: number;
+}): Promise<{ ok: boolean; error?: string; usedBaseUrl?: string }> {
+  const config = await getTelegramBotConfig().catch(() => null);
+  const token = decryptSecret(options.botToken || config?.botToken || "");
+  const rawBase = options.apiBaseUrl || config?.apiBaseUrl || PROXY_PRESETS.dialog_ai;
+  const primaryBase = cleanTelegramBaseUrl(rawBase);
+  const timeoutMs = options.timeoutMs || 10000;
+
+  if (!token || !options.webhookUrl) {
+    return { ok: false, error: "Bot token or webhookUrl is missing" };
+  }
+
+  const candidates = getOrderedBaseUrls(primaryBase, false);
+  let lastError = "Webhook setup failed";
+
+  for (let i = 0; i < candidates.length; i++) {
+    const base = candidates[i];
+    const url = `${base}/bot${token}/setWebhook`;
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: options.webhookUrl }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      const data: any = await res.json().catch(() => ({}));
+      if (res.ok && data?.ok) {
+        lastWorkingBaseUrl = base;
+        return { ok: true, usedBaseUrl: base };
+      }
+      lastError = data?.description || `HTTP ${res.status}`;
+    } catch (err: any) {
+      lastError = err?.cause?.message || err?.message || "Network error";
+    }
+  }
+
+  return { ok: false, error: lastError };
+}
+
+
 // 4. Отправка файлов / бэкапов (sendDocument)
 export async function sendTelegramDocument(options: {
   chatId: string | number;

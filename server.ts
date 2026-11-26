@@ -28,6 +28,7 @@ import { seoRouter } from './src/server/routes/seo';
 import { ensurePushInfrastructure } from './src/server/push';
 import { initBackupCronJob } from './src/server/cron';
 import { initSavRssScheduler } from './src/server/blog/savRssSync';
+import { sendTelegramMessage, setTelegramWebhook } from './src/server/telegram';
 
 dotenv.config();
 
@@ -158,11 +159,6 @@ async function startServer() {
 
       if (APP_URL) {
         const webhookUrl = `${APP_URL}/api/telegram-webhook`;
-        bot.setWebHook(webhookUrl).then(() => {
-          console.log(`Telegram Webhook set to: ${webhookUrl}`);
-        }).catch((err) => {
-          console.warn(`[TelegramBot] Failed to set webhook to ${webhookUrl}:`, err?.message || err);
-        });
 
         app.post('/api/telegram-webhook', (req, res) => {
           try {
@@ -171,6 +167,15 @@ async function startServer() {
             console.warn('[TelegramBot Webhook Process Error]:', e);
           }
           res.sendStatus(200);
+        });
+
+        void ensureBackendReady().then(async () => {
+          const result = await setTelegramWebhook({ webhookUrl, botToken: BOT_TOKEN });
+          if (result.ok) {
+            console.log(`Telegram Webhook set to: ${webhookUrl}`);
+          } else {
+            console.warn(`[TelegramBot] Webhook setup skipped (${webhookUrl}): ${result.error}`);
+          }
         });
       } else {
         console.log('[TelegramBot] No external APP_URL configured for webhook.');
@@ -182,8 +187,11 @@ async function startServer() {
 
         if (startParam === 'link') {
           const code = `sdf${chatId}gh`;
-          bot.sendMessage(chatId, `Ваш код для привязки аккаунта в Квайз:\n\n<code>${code}</code>\n\nСкопируйте этот код и вставьте его в приложении.`, {
-            parse_mode: 'HTML'
+          void sendTelegramMessage({
+            chatId,
+            botToken: BOT_TOKEN,
+            parseMode: 'HTML',
+            text: `Ваш код для привязки аккаунта в Квайз:\n\n<code>${code}</code>\n\nСкопируйте этот код и вставьте его в приложении.`,
           }).catch(e => console.warn('[TelegramBot sendMessage Error]:', e?.message));
           console.log(`Generated linking code ${code} for chat ${chatId}`);
         }
@@ -191,8 +199,11 @@ async function startServer() {
 
       bot.on('message', (msg) => {
         if (msg.text === '/start') {
-          bot.sendMessage(msg.chat.id, 'Добро пожаловать в Квайз! Чтобы привязать аккаунт, используйте кнопку в приложении.')
-            .catch(e => console.warn('[TelegramBot sendMessage Error]:', e?.message));
+          void sendTelegramMessage({
+            chatId: msg.chat.id,
+            botToken: BOT_TOKEN,
+            text: 'Добро пожаловать в Квайз! Чтобы привязать аккаунт, используйте кнопку в приложении.',
+          }).catch(e => console.warn('[TelegramBot sendMessage Error]:', e?.message));
         }
       });
 

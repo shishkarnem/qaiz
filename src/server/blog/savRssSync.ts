@@ -1,5 +1,6 @@
 import { XMLParser } from 'fast-xml-parser';
 import { getAll, getOne, runSql, generateId } from '../db';
+import { invalidatePostsMemoryCache } from './postsMemoryCache';
 
 export const SAV_RSS_DOMAINS = [
   'https://savbot.ru',
@@ -11,6 +12,16 @@ export const SAV_RSS_DOMAINS = [
 
 const RSS_FETCH_TIMEOUT_MS = 15000;
 const VIDEO_EXT_RE = /\.(mp4|webm|mov|m4v)(\?.*)?$/i;
+
+export const OLD_SAV_DEFAULT_IMG =
+  'https://file.pro-talk.ru/tgf/GgMpJwQ9JCkYKglyGHQMJH0GOjgMOTE_BA9wETwiCzYmBQ95AyhoBSJLMhgZEyQdKwssKyoEUnQKdGsEfDonABIYETY4NRQmEV9uZlUAaA11VQJrCjgDAzkkAVczLRouDiMXfQxTNBdFGT8aIyw2ZyIcIQsIKjIuHhtsBXZSBGZ5T3FP.png';
+export const NEW_SAV_DEFAULT_IMG =
+  'https://file.pro-talk.ru/tgf/GTUpJwQ9JCkYKlJzP2IIL1oQCjoETxogKjMQDi9dHDc1dQsFCixmCA0jFUkMFlo-dhssKysQFkQeQj4zeRQiCnQAPCYtCXIiOTkcEyNBEHQHUlkQCgN1PyQuUFJzaVlQbGpXAmN0ByliZnsWMyoNOCEeLTtAMSMWVnRsRxEKZyMCTHIPH2Q-KTkmQFlpYlAHaQZwVAtoe0E.jpg';
+
+export function replaceKnownRssImages(input: string): string {
+  if (!input || !input.includes(OLD_SAV_DEFAULT_IMG)) return input;
+  return input.split(OLD_SAV_DEFAULT_IMG).join(NEW_SAV_DEFAULT_IMG);
+}
 
 let schemaInitialized = false;
 let isSyncRunning = false;
@@ -36,7 +47,7 @@ export function getLastSavRssSyncStatus(): SavRssSyncResult | null {
 }
 
 export function sanitizeExternalUrl(rawUrl: unknown): string {
-  const val = String(rawUrl || '').trim();
+  const val = replaceKnownRssImages(String(rawUrl || '').trim());
   if (!val) return '';
   if (val.startsWith('/') && !val.startsWith('//')) {
     return val;
@@ -168,6 +179,30 @@ export async function ensureBlogRssSchema(): Promise<void> {
       console.warn('[Blog RSS Schema Warning]:', err?.message || err);
     });
   }
+
+  await runSql(
+    `UPDATE posts
+     SET image_url = REPLACE(image_url, $1, $2),
+         cover_image_url = REPLACE(cover_image_url, $1, $2),
+         content = REPLACE(content, $1, $2),
+         excerpt = REPLACE(excerpt, $1, $2),
+         seo_title = REPLACE(seo_title, $1, $2),
+         seo_description = REPLACE(seo_description, $1, $2),
+         media_json = REPLACE(media_json, $1, $2),
+         buttons_json = REPLACE(buttons_json, $1, $2),
+         updated_at = NOW()
+     WHERE COALESCE(image_url, '') LIKE $3
+        OR COALESCE(cover_image_url, '') LIKE $3
+        OR COALESCE(content, '') LIKE $3
+        OR COALESCE(excerpt, '') LIKE $3
+        OR COALESCE(seo_title, '') LIKE $3
+        OR COALESCE(seo_description, '') LIKE $3
+        OR COALESCE(media_json, '') LIKE $3
+        OR COALESCE(buttons_json, '') LIKE $3`,
+    [OLD_SAV_DEFAULT_IMG, NEW_SAV_DEFAULT_IMG, `%${OLD_SAV_DEFAULT_IMG}%`]
+  ).catch((err) => {
+    console.warn('[Blog RSS Image Replace Warning]:', err?.message || err);
+  });
 
   schemaInitialized = true;
 }
@@ -431,19 +466,25 @@ export async function syncSavRssFeed(options?: {
         const contentMarkdown = extractNodeText(getNamespacedValue(item, 'sav', 'contentMarkdown'));
         const contentEncoded = extractNodeText(item['content:encoded']);
         const descriptionText = extractNodeText(item.description);
-        const fullContent = contentMarkdown || contentEncoded || descriptionText || title;
+        const fullContent = replaceKnownRssImages(
+          contentMarkdown || contentEncoded || descriptionText || title
+        );
 
-        const cleanExcerpt =
-          stripPlainSummary(descriptionText, 280) || stripPlainSummary(fullContent, 280);
-        const seoTitle =
-          extractNodeText(getNamespacedValue(item, 'sav', 'seoTitle')) || title;
-        const seoDescription =
-          extractNodeText(getNamespacedValue(item, 'sav', 'seoDescription')) || cleanExcerpt;
+        const cleanExcerpt = replaceKnownRssImages(
+          stripPlainSummary(descriptionText, 280) || stripPlainSummary(fullContent, 280)
+        );
+        const seoTitle = replaceKnownRssImages(
+          extractNodeText(getNamespacedValue(item, 'sav', 'seoTitle')) || title
+        );
+        const seoDescription = replaceKnownRssImages(
+          extractNodeText(getNamespacedValue(item, 'sav', 'seoDescription')) || cleanExcerpt
+        );
         const seoKeywords =
           extractNodeText(getNamespacedValue(item, 'sav', 'seoKeywords')) || `${category}, sav ai`;
 
-        const mediaJsonSerialized = JSON.stringify(mediaArray);
-        const buttonsJsonSerialized = JSON.stringify(buttonsArray);
+        coverImageUrl = replaceKnownRssImages(coverImageUrl);
+        const mediaJsonSerialized = replaceKnownRssImages(JSON.stringify(mediaArray));
+        const buttonsJsonSerialized = replaceKnownRssImages(JSON.stringify(buttonsArray));
         const finalSlug = await resolveUniquePostSlug(rawSlug, externalId);
 
         if (!existing) {
@@ -570,6 +611,9 @@ export async function syncSavRssFeed(options?: {
       syncedAt: startedAt,
     };
     lastSyncStatus = result;
+    if (added > 0 || updated > 0) {
+      invalidatePostsMemoryCache();
+    }
     console.log(
       `[SAV RSS Sync] Source: ${sourceDomain} | Total: ${itemsList.length} | Added: ${added} | Updated: ${updated} | Skipped: ${skipped}${errors > 0 ? ` | Failed: ${errors}` : ''}`
     );

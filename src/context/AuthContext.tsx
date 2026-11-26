@@ -110,18 +110,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       localStorage.setItem('qaiz_user_uid', canonicalUid);
       localStorage.setItem('user_id', canonicalUid);
 
-      // Periodic heartbeat to maintain online presence
-      const ping = () => {
-        fetch('/api/users/heartbeat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId: canonicalUid })
-        }).catch(() => {});
+      // Periodic heartbeat to maintain online presence (idempotent GET prevents HTTP/3 QUIC GOAWAY errors)
+      let lastPingAt = 0;
+      const ping = async () => {
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+        lastPingAt = Date.now();
+        const url = `/api/users/heartbeat?userId=${encodeURIComponent(canonicalUid)}&_=${lastPingAt}`;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            const res = await fetch(url, {
+              method: 'GET',
+              cache: 'no-store',
+            });
+            if (res.ok || attempt === 1) return;
+          } catch (_) {
+            if (attempt === 1) return;
+            await new Promise((r) => setTimeout(r, 350));
+          }
+        }
       };
 
-      ping();
-      const interval = setInterval(ping, 60000);
-      return () => clearInterval(interval);
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'visible' && Date.now() - lastPingAt > 45000) {
+          void ping();
+        }
+      };
+
+      void ping();
+      const interval = setInterval(() => {
+        void ping();
+      }, 60000);
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      return () => {
+        clearInterval(interval);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      };
     } else if (!isLoading && demoUid) {
       localStorage.removeItem('qaiz_user_uid');
       localStorage.setItem('qaiz_active_user_id', demoUid);

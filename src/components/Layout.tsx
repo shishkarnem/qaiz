@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { CheckCircle2, XCircle, Sparkles, Wallet, ArrowRight, RefreshCcw, X } from 'lucide-react';
 import { Header, Navbar } from './Navigation';
 import { useTheme } from '../context/ThemeContext';
@@ -11,13 +11,21 @@ import { LeafButton } from './ui/LeafButton';
 import { BubbleElement } from './ui/BubbleElement';
 import { formatIikr } from '../lib/currency';
 import { audioSystem } from '../hooks/useSound';
+import {
+  getSavedBlogScrollY,
+  hasSavedBlogPosition,
+  markBlogRestorePending,
+} from '../services/blog/blogCache';
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const { theme, toggleTheme } = useTheme();
   const { profile, refetchProfile } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
+  const navigationType = useNavigationType();
   const prevPathRef = useRef<string>(location.pathname);
+  const committedScrollPathRef = useRef<string>(location.pathname);
+  const lastDifferentScrollPathRef = useRef<string>(location.pathname);
   const [paymentBanner, setPaymentBanner] = useState<{
     status: 'success' | 'fail';
     invId?: string;
@@ -69,11 +77,40 @@ export function Layout({ children }: { children: React.ReactNode }) {
     navigate(`${location.pathname}${nextSearch ? `?${nextSearch}` : ''}`, { replace: true });
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (typeof window !== 'undefined' && 'scrollRestoration' in window.history) {
+      window.history.scrollRestoration = 'manual';
+    }
+
+    const nextPath = location.pathname;
+    if (committedScrollPathRef.current !== nextPath) {
+      lastDifferentScrollPathRef.current = committedScrollPathRef.current;
+      committedScrollPathRef.current = nextPath;
+    }
+
+    const prevPath = lastDifferentScrollPathRef.current;
+    const isBlogFeed = nextPath === '/blog' || nextPath === '/blog/';
+    const cameFromBlogPost = /^\/blog\/.+/.test(prevPath);
+    const savedY = getSavedBlogScrollY();
+
+    if (isBlogFeed && (cameFromBlogPost || navigationType === 'POP') && hasSavedBlogPosition()) {
+      markBlogRestorePending(true);
+      if (savedY > 0) {
+        window.scrollTo({ top: savedY, left: 0, behavior: 'instant' as ScrollBehavior });
+        if (document.documentElement) document.documentElement.scrollTop = savedY;
+        if (document.body) document.body.scrollTop = savedY;
+      }
+      return;
+    }
+
+    if (!isBlogFeed && prevPath === '/blog' && !/^\/blog\/.+/.test(nextPath)) {
+      markBlogRestorePending(false);
+    }
+
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
     if (document.documentElement) document.documentElement.scrollTop = 0;
     if (document.body) document.body.scrollTop = 0;
-  }, [location.pathname, location.search]);
+  }, [location.pathname, location.search, navigationType]);
 
   useEffect(() => {
     const p = location.pathname.toLowerCase();

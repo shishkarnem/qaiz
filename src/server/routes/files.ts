@@ -1,10 +1,11 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { getAll, getOne, runSql } from '../db';
 import { pgOne, PROTALK_UPLOAD_URL, PROTALK_UPLOAD_TOKEN } from '../pg';
 
 export const filesRouter = Router();
+const PROTALK_FILESTORE_UP_URL = process.env.PROTALK_FILESTORE_UP_URL || 'https://filestore.pro-talk.ru/up';
 
 export async function resolveFolderIntId(rawFolderId: any): Promise<number | null> {
   if (rawFolderId === null || rawFolderId === undefined) return null;
@@ -70,36 +71,87 @@ function cacheBuffer(key: string, buffer: Buffer, contentType: string) {
   upstreamBufferCache.set(key, { buffer, contentType });
 }
 
-export async function uploadBufferToProTalkFilestore(buffer: Buffer, fileName: string, mimeType: string): Promise<string | null> {
+function parseProTalkUploadResponseText(text: string): string | null {
+  const clean = (text || '').trim();
+  if (!clean) return null;
+  if (clean.startsWith('http://') || clean.startsWith('https://')) {
+    return clean;
+  }
   try {
-    const blob = new Blob([buffer], { type: mimeType || 'application/octet-stream' });
+    const parsed = JSON.parse(clean);
+    if (typeof parsed === 'string' && (parsed.startsWith('http://') || parsed.startsWith('https://'))) {
+      return parsed;
+    }
+    if (parsed?.data?.url) return String(parsed.data.url);
+    if (parsed?.url) return String(parsed.url);
+    if (parsed?.file) return String(parsed.file);
+  } catch (_) {}
+  return null;
+}
+
+async function uploadBufferToEndpoint(
+  endpoint: string,
+  buffer: Buffer,
+  fileName: string,
+  mimeType: string,
+  uploadToken: string,
+  preserveAlpha: boolean
+): Promise<string | null> {
+  try {
+    const blob = new Blob([new Uint8Array(buffer)], { type: mimeType || 'application/octet-stream' });
     const fd = new FormData();
     fd.append('file', blob, fileName || 'file');
-    const res = await fetch(PROTALK_UPLOAD_URL, {
+    const headers: Record<string, string> = {
+      'X-Upload-Token': uploadToken || PROTALK_UPLOAD_TOKEN,
+    };
+    if (preserveAlpha) {
+      headers['X-Preserve-Alpha'] = 'true';
+    }
+    const res = await fetch(endpoint, {
       method: 'POST',
-      headers: {
-        'X-Upload-Token': PROTALK_UPLOAD_TOKEN,
-        'X-Preserve-Alpha': 'true',
-      },
-      body: fd
+      headers,
+      body: fd,
     });
     if (res.ok) {
-      const text = (await res.text()).trim();
-      if (text.startsWith('http://') || text.startsWith('https://')) {
-        return text;
-      }
-      try {
-        const parsed = JSON.parse(text);
-        if (parsed?.data?.url) return String(parsed.data.url);
-        if (parsed?.url) return String(parsed.url);
-        if (parsed?.file) return String(parsed.file);
-      } catch (_) {}
+      const text = await res.text();
+      const parsed = parseProTalkUploadResponseText(text);
+      if (parsed) return parsed;
     } else {
       const errTxt = await res.text().catch(() => '');
-      console.warn(`ProTalk file upload HTTP ${res.status}:`, errTxt.slice(0, 200));
+      console.warn(`ProTalk file upload HTTP ${res.status} (${endpoint}):`, errTxt.slice(0, 200));
     }
   } catch (err) {
-    console.error('Error uploading buffer to file.pro-talk.ru/tgf:', err);
+    console.error(`Error uploading buffer to ${endpoint}:`, err);
+  }
+  return null;
+}
+
+export async function uploadBufferToProTalkFilestore(
+  buffer: Buffer,
+  fileName: string,
+  mimeType: string,
+  uploadToken: string = PROTALK_UPLOAD_TOKEN,
+  preserveAlpha: boolean = true
+): Promise<string | null> {
+  const primary = await uploadBufferToEndpoint(
+    PROTALK_FILESTORE_UP_URL,
+    buffer,
+    fileName,
+    mimeType,
+    uploadToken,
+    preserveAlpha
+  );
+  if (primary) return primary;
+
+  if (PROTALK_UPLOAD_URL !== PROTALK_FILESTORE_UP_URL) {
+    return await uploadBufferToEndpoint(
+      PROTALK_UPLOAD_URL,
+      buffer,
+      fileName,
+      mimeType,
+      uploadToken,
+      preserveAlpha
+    );
   }
   return null;
 }
@@ -451,6 +503,93 @@ const handleGetUploaders = async (_req: any, res: any) => {
 
 filesRouter.get('/uploaders', handleGetUploaders);
 filesRouter.get('/files/uploaders', handleGetUploaders);
+
+// Same-origin binary upload proxy to ProTalk cloud storage (avoids browser CORS preflight rejections)
+const rawBinaryUploadMiddleware = express.raw({ type: '*/*', limit: '100mb' });
+
+const handleUploadProxy = async (req: any, res: any) => {
+  try {
+    const buffer = Buffer.isBuffer(req.body)
+      ? req.body
+      : typeof req.body === 'string'
+      ? Buffer.from(req.body)
+      : null;
+
+    if (!buffer || buffer.length === 0) {
+      return res.status(400).json({ error: 'Пустое тело файла при загрузке' });
+    }
+
+    const rawName = String(req.headers['x-file-name'] || req.query?.name || 'file');
+    let fileName = rawName;
+    try {
+      fileName = decodeURIComponent(rawName);
+    } catch (_) {}
+    fileName = fileName.trim() || 'file';
+
+    const rawMime = String(req.headers['x-file-mime'] || req.query?.mime || 'application/octet-stream');
+    const mimeType = inferMimeTypeFromName(fileName, rawMime);
+    const tokenHeader = String(req.headers['x-upload-token'] || '').trim();
+    const uploadToken = tokenHeader || PROTALK_UPLOAD_TOKEN;
+    const isPng =
+      req.headers['x-preserve-alpha'] === 'true' ||
+      mimeType === 'image/png' ||
+      fileName.toLowerCase().endsWith('.png');
+
+    const remoteUrl = await uploadBufferToProTalkFilestore(buffer, fileName, mimeType, uploadToken, isPng);
+    if (!remoteUrl) {
+      return res.status(502).json({ error: 'Не удалось загрузить файл в облачное хранилище ProTalk' });
+    }
+
+    res.json({ success: true, url: remoteUrl });
+  } catch (err: any) {
+    console.error('Upload proxy error:', err);
+    res.status(500).json({ error: err?.message || 'Ошибка прокси-загрузки файла' });
+  }
+};
+
+filesRouter.post('/upload-proxy', rawBinaryUploadMiddleware, handleUploadProxy);
+filesRouter.post('/files/upload-proxy', rawBinaryUploadMiddleware, handleUploadProxy);
+
+// Same-origin URL upload proxy (avoids browser CORS to file.pro-talk.ru/tgf)
+const handleUploadUrlProxy = async (req: any, res: any) => {
+  try {
+    const sourceUrl = String(req.body?.url || '').trim();
+    if (!sourceUrl) {
+      return res.status(400).json({ error: 'URL обязателен' });
+    }
+    if (sourceUrl.includes('filestore.pro-talk.ru/') || sourceUrl.includes('file.pro-talk.ru/')) {
+      return res.json({ success: true, url: sourceUrl });
+    }
+    const uploadToken = String(req.body?.token || req.headers['x-upload-token'] || PROTALK_UPLOAD_TOKEN).trim();
+
+    for (const endpoint of [PROTALK_UPLOAD_URL, PROTALK_FILESTORE_UP_URL]) {
+      try {
+        const upRes = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'X-Upload-Token': uploadToken || PROTALK_UPLOAD_TOKEN,
+          },
+          body: new URLSearchParams({ url: sourceUrl }),
+        });
+        if (upRes.ok) {
+          const text = await upRes.text();
+          const parsed = parseProTalkUploadResponseText(text);
+          if (parsed) {
+            return res.json({ success: true, url: parsed });
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Fallback: return original URL if upstream did not mirror it
+    return res.json({ success: true, url: sourceUrl });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Ошибка загрузки по URL' });
+  }
+};
+
+filesRouter.post('/upload-url-proxy', handleUploadUrlProxy);
+filesRouter.post('/files/upload-url-proxy', handleUploadUrlProxy);
 
 // Create/Store new file record in DB (always uploading data URLs to https://file.pro-talk.ru/tgf)
 const handleCreateFile = async (req: any, res: any) => {

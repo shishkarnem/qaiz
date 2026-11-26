@@ -663,19 +663,25 @@ friendsRouter.get('/inviter', async (req, res) => {
   }
 });
 
-// POST /api/users/heartbeat
-friendsRouter.post('/heartbeat', async (req, res) => {
+// GET/POST /api/friends/heartbeat or /api/messages/heartbeat
+friendsRouter.all('/heartbeat', async (req, res) => {
   try {
-    const { userId } = req.body;
+    const userId =
+      req.body?.userId ||
+      req.body?.uid ||
+      req.query?.userId ||
+      req.query?.uid ||
+      req.headers['x-user-uid'];
     if (userId) {
+      const cleanUid = String(userId).trim();
       await runSql(
-        `UPDATE users SET last_seen = NOW() WHERE uid = $1 OR id = $2`,
-        [userId, userId]
+        `UPDATE users SET last_seen = NOW(), last_active_at = NOW() WHERE uid = $1 OR id = $2`,
+        [cleanUid, cleanUid]
       );
     }
     res.json({ ok: true, timestamp: Date.now() });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (_err: any) {
+    res.json({ ok: false });
   }
 });
 

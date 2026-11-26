@@ -685,10 +685,15 @@ usersRouter.post('/exchange-points', async (req, res) => {
   }
 });
 
-// Heartbeat endpoint to record active session and shift 7-day reminder schedule
-usersRouter.post('/heartbeat', async (req, res) => {
+// Heartbeat endpoint (GET & POST) to record active session and shift 7-day reminder schedule
+usersRouter.all('/heartbeat', async (req, res) => {
   try {
-    const uid = req.body?.uid || req.headers['x-user-uid'];
+    const uid =
+      req.body?.uid ||
+      req.body?.userId ||
+      req.query?.uid ||
+      req.query?.userId ||
+      req.headers['x-user-uid'];
     if (!uid) {
       return res.json({ ok: false });
     }
@@ -702,7 +707,7 @@ usersRouter.post('/heartbeat', async (req, res) => {
       [cleanUid, cleanUid, cleanUid]
     );
     res.json({ ok: true });
-  } catch (err: any) {
+  } catch (_err: any) {
     res.json({ ok: false });
   }
 });
